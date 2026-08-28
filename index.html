@@ -699,6 +699,34 @@
         </div>
 
         <button class="btn-main" id="auth-submit-btn" onclick="handleAuth()">Log In securely</button>
+        <p id="forgot-password-link" style="text-align:center; margin-top:10px; font-size:0.8rem; color:#4f46e5; font-weight:700; cursor:pointer;" onclick="openForgotPasswordModal()">Forgot Password?</p>
+    </div>
+
+    <div id="forgot-modal" class="generic-modal" onclick="closeGenericModal(event, 'forgot-modal')">
+        <div class="modal-content" onclick="event.stopPropagation()">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+                <h3 style="font-size:1.1rem; font-weight:800; color:#312e81;">🔑 Reset Password</h3>
+                <i class="fa-solid fa-xmark" style="cursor:pointer; font-size:1.2rem; color:#64748b;" onclick="closeGenericModal(null, 'forgot-modal')"></i>
+            </div>
+            <hr style="border:0; border-top:1px solid #e2e8f0; margin-bottom:14px;">
+
+            <div class="input-group">
+                <label>Registered Gmail Address</label>
+                <div class="mobile-otp-flex">
+                    <input type="email" id="forgot-email" placeholder="example@gmail.com">
+                    <button class="btn-otp" id="forgot-send-otp-btn" onclick="sendForgotPasswordOTP()">Send OTP</button>
+                </div>
+            </div>
+            <div class="input-group">
+                <label>Email OTP</label>
+                <input type="number" id="forgot-otp" placeholder="Enter OTP received on email">
+            </div>
+            <div class="input-group">
+                <label>New Password</label>
+                <input type="password" id="forgot-new-password" placeholder="••••••••">
+            </div>
+            <button class="btn-main" onclick="resetPassword()" style="margin-top:6px;">Reset Password</button>
+        </div>
     </div>
 
     <div id="dashboard-section" class="hidden">
@@ -970,7 +998,7 @@
                     <input type="file" id="support-photo" accept="image/*" style="padding: 9px 12px; font-size: 0.85rem;">
                 </div>
 
-                <button class="btn-main" onclick="submitSupport()" style="margin-top:8px;">Submit Ticket</button>
+                <button class="btn-main" id="support-submit-btn" onclick="submitSupport()" style="margin-top:8px;">Submit Ticket</button>
             </div>
 
             <div class="ad-banner-box">
@@ -1090,6 +1118,64 @@
         document.getElementById('otp-field').classList.toggle('hidden', isLoginMode);
         document.getElementById('ref-field').classList.toggle('hidden', isLoginMode);
         document.getElementById('auth-submit-btn').innerText = isLoginMode ? 'Log In securely' : 'Sign Up & Verify';
+        document.getElementById('forgot-password-link').classList.toggle('hidden', !isLoginMode);
+    }
+
+    let forgotOtpSent = false;
+
+    async function sendForgotPasswordOTP() {
+        const email = document.getElementById('forgot-email').value.trim();
+        if (!email) return showToast('Kripya apna registered Gmail address daalein!', 'error');
+
+        const btn = document.getElementById('forgot-send-otp-btn');
+        btn.disabled = true;
+        btn.innerText = 'Sending...';
+
+        try {
+            const res = await fetch('/api/forgot_password_send_otp', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ email })
+            });
+            const data = await res.json();
+            showToast(data.message, data.status === 'success' ? 'success' : 'error');
+            if (data.status === 'success') forgotOtpSent = true;
+        } catch (err) {
+            showToast('Network error, dobara try karein!', 'error');
+        } finally {
+            btn.disabled = false;
+            btn.innerText = 'Send OTP';
+        }
+    }
+
+    async function resetPassword() {
+        const email = document.getElementById('forgot-email').value.trim();
+        const otp = document.getElementById('forgot-otp').value.trim();
+        const new_password = document.getElementById('forgot-new-password').value;
+
+        if (!forgotOtpSent) return showToast('Pehle OTP bhejein!', 'error');
+        if (!otp) return showToast('Kripya OTP daalein!', 'error');
+        if (!new_password) return showToast('Kripya naya password daalein!', 'error');
+
+        const res = await fetch('/api/forgot_password_reset', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ email, otp, new_password })
+        });
+        const data = await res.json();
+        showToast(data.message, data.status === 'success' ? 'success' : 'error');
+
+        if (data.status === 'success') {
+            forgotOtpSent = false;
+            document.getElementById('forgot-email').value = '';
+            document.getElementById('forgot-otp').value = '';
+            document.getElementById('forgot-new-password').value = '';
+            closeGenericModal(null, 'forgot-modal');
+        }
+    }
+
+    function openForgotPasswordModal() {
+        document.getElementById('forgot-modal').classList.add('show');
     }
 
     function selectPaymentMethod(method) {
@@ -1506,31 +1592,44 @@
         if(!problem_type) return showToast('Kripya problem category select karein!', 'error');
         if(!description) return showToast('Kripya apni samasya ke bare me likhein!', 'error');
 
-        let photoBase64 = '';
-        if (photoInput.files && photoInput.files[0]) {
-            const file = photoInput.files[0];
-            photoBase64 = await new Promise((resolve) => {
-                const reader = new FileReader();
-                reader.onload = (e) => resolve(e.target.result);
-                reader.readAsDataURL(file);
+        const btn = document.getElementById('support-submit-btn');
+        if (btn.disabled) return; // already sending - stop double submit
+        btn.disabled = true;
+        const originalBtnText = btn.innerText;
+        btn.innerText = 'Sending...';
+
+        try {
+            let photoBase64 = '';
+            if (photoInput.files && photoInput.files[0]) {
+                const file = photoInput.files[0];
+                photoBase64 = await new Promise((resolve) => {
+                    const reader = new FileReader();
+                    reader.onload = (e) => resolve(e.target.result);
+                    reader.readAsDataURL(file);
+                });
+            }
+
+            const res = await fetch('/api/support', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ problem_type, description, photo: photoBase64 })
             });
-        }
+            const data = await res.json();
 
-        const res = await fetch('/api/support', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({ problem_type, description, photo: photoBase64 })
-        });
-        const data = await res.json();
-
-        if(data.status === 'success') {
-            showToast(data.message, 'success');
-            document.getElementById('support-category').value = '';
-            document.getElementById('support-desc').value = '';
-            photoInput.value = '';
-            loadDashboard();
-        } else {
-            showToast(data.message, 'error');
+            if(data.status === 'success') {
+                showToast(data.message, 'success');
+                document.getElementById('support-category').value = '';
+                document.getElementById('support-desc').value = '';
+                photoInput.value = '';
+                loadDashboard();
+            } else {
+                showToast(data.message, 'error');
+            }
+        } catch (err) {
+            showToast('Network error, dobara try karein!', 'error');
+        } finally {
+            btn.disabled = false;
+            btn.innerText = originalBtnText;
         }
     }
 

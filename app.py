@@ -9,6 +9,7 @@ import ssl
 from email.mime.text import MIMEText
 from datetime import datetime, date, timedelta
 from dotenv import load_dotenv
+from pymongo import MongoClient
 
 load_dotenv()  # reads .env file if present (local development)
 
@@ -20,26 +21,56 @@ app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
 
 DB_FILE = "users.json"
 
+# --- MongoDB (permanent storage - Render's local disk resets on restart/sleep) ---
+MONGODB_URI = os.environ.get("MONGODB_URI", "")
+mongo_collection = None
+if MONGODB_URI:
+    try:
+        _mongo_client = MongoClient(MONGODB_URI)
+        mongo_collection = _mongo_client.get_database("profitix").get_collection("app_data")
+    except Exception as e:
+        print("Mongo connection error:", repr(e))
+
+DEFAULT_DATA = {"users": {}, "withdrawals": [], "support_tickets": [], "notifications": [], "promo_codes": {}}
+
 def load_data():
+    if mongo_collection is not None:
+        try:
+            doc = mongo_collection.find_one({"_id": "main"})
+            if doc:
+                doc.pop("_id", None)
+                for key, val in DEFAULT_DATA.items():
+                    if key not in doc:
+                        doc[key] = val
+                return doc
+            return dict(DEFAULT_DATA)
+        except Exception as e:
+            print("Mongo load error:", repr(e))
+
+    # Fallback: local file (works for local testing; NOT persistent on Render free tier)
     if os.path.exists(DB_FILE):
         try:
             with open(DB_FILE, "r") as f:
                 data = json.load(f)
                 if isinstance(data, dict):
-                    if "users" not in data:
-                        data = {"users": data, "withdrawals": [], "support_tickets": [], "notifications": [], "promo_codes": {}}
-                    if "support_tickets" not in data:
-                        data["support_tickets"] = []
-                    if "notifications" not in data:
-                        data["notifications"] = []
-                    if "promo_codes" not in data:
-                        data["promo_codes"] = {}
+                    for key, val in DEFAULT_DATA.items():
+                        if key not in data:
+                            data[key] = val
                     return data
         except:
-            return {"users": {}, "withdrawals": [], "support_tickets": [], "notifications": [], "promo_codes": {}}
-    return {"users": {}, "withdrawals": [], "support_tickets": [], "notifications": [], "promo_codes": {}}
+            pass
+    return dict(DEFAULT_DATA)
 
 def save_data(data):
+    if mongo_collection is not None:
+        try:
+            doc = dict(data)
+            doc["_id"] = "main"
+            mongo_collection.replace_one({"_id": "main"}, doc, upsert=True)
+            return
+        except Exception as e:
+            print("Mongo save error:", repr(e))
+
     with open(DB_FILE, "w") as f:
         json.dump(data, f, indent=4)
 
@@ -164,6 +195,10 @@ def register():
     if username in users_db:
         return jsonify({"status": "error", "message": "Username pehle se exist karta hai!"})
 
+    for u, udata in users_db.items():
+        if udata.get('email', '').strip().lower() == email:
+            return jsonify({"status": "error", "message": "Ye Gmail pehle se ek account me use ho chuka hai!"})
+
     stored = otp_db.get(email)
     if not stored:
         return jsonify({"status": "error", "message": "Pehle OTP bhejein!"})
@@ -225,6 +260,69 @@ def login():
         return jsonify({"status": "success", "message": "Logged in successfully!"})
 
     return jsonify({"status": "error", "message": "Invalid username or password"})
+
+@app.route('/api/forgot_password_send_otp', methods=['POST'])
+def forgot_password_send_otp():
+    data = request.json
+    email = data.get('email', '').strip().lower()
+
+    matched_username = None
+    for u, udata in users_db.items():
+        if udata.get('email', '').strip().lower() == email:
+            matched_username = u
+            break
+
+    if not matched_username:
+        return jsonify({"status": "error", "message": "Is Gmail se koi account register nahi hai!"})
+
+    otp = str(random.randint(100000, 999999))
+    otp_db[email] = {
+        "otp": otp,
+        "expires_at": (datetime.now() + timedelta(minutes=OTP_EXPIRY_MINUTES)).isoformat(),
+        "purpose": "reset_password"
+    }
+
+    sent = send_otp_email(email, otp)
+    if sent:
+        return jsonify({"status": "success", "message": f"Password reset OTP aapke email ({email}) par bhej diya gaya hai!"})
+    else:
+        return jsonify({"status": "success", "message": f"[DEV MODE - email not configured] OTP: {otp}"})
+
+@app.route('/api/forgot_password_reset', methods=['POST'])
+def forgot_password_reset():
+    data = request.json
+    email = data.get('email', '').strip().lower()
+    user_otp = data.get('otp', '').strip()
+    new_password = data.get('new_password', '')
+
+    if not new_password or len(new_password) < 4:
+        return jsonify({"status": "error", "message": "Password kam se kam 4 characters ka hona chahiye!"})
+
+    stored = otp_db.get(email)
+    if not stored or stored.get("purpose") != "reset_password":
+        return jsonify({"status": "error", "message": "Pehle OTP bhejein!"})
+
+    if datetime.now() > datetime.fromisoformat(stored["expires_at"]):
+        otp_db.pop(email, None)
+        return jsonify({"status": "error", "message": "OTP expire ho chuka hai, dobara bhejein!"})
+
+    if stored["otp"] != user_otp:
+        return jsonify({"status": "error", "message": "Galat OTP!"})
+
+    matched_username = None
+    for u, udata in users_db.items():
+        if udata.get('email', '').strip().lower() == email:
+            matched_username = u
+            break
+
+    if not matched_username:
+        return jsonify({"status": "error", "message": "Account nahi mila!"})
+
+    otp_db.pop(email, None)
+    users_db[matched_username]['password'] = new_password
+    save_data({"users": users_db, "withdrawals": withdrawals_db, "support_tickets": support_tickets_db, "notifications": notifications_db, "promo_codes": promo_codes_db})
+
+    return jsonify({"status": "success", "message": "Password successfully reset ho gaya! Ab login karein."})
 
 @app.route('/api/logout', methods=['POST'])
 def logout():
