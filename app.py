@@ -54,41 +54,37 @@ ADMIN_CHAT_ID = os.environ.get("ADMIN_CHAT_ID", "")
 ADMIN_SUPPORT_GC = os.environ.get("ADMIN_SUPPORT_GC", "")
 ADMIN_PAYMENT_CHANNEL = os.environ.get("ADMIN_PAYMENT_CHANNEL", "@PROFITIX77")
 
-# --- Gmail SMTP settings (for sending real OTP emails) ---
-GMAIL_ADDRESS = os.environ.get("GMAIL_ADDRESS", "")
-GMAIL_APP_PASSWORD = os.environ.get("GMAIL_APP_PASSWORD", "")
+# --- Email OTP via Brevo API (HTTPS-based — works on Render, unlike raw SMTP which Render blocks) ---
+BREVO_API_KEY = os.environ.get("BREVO_API_KEY", "")
+SENDER_EMAIL = os.environ.get("GMAIL_ADDRESS", "no-reply@profitix.com")
 OTP_EXPIRY_MINUTES = 5
 
 
 def send_otp_email(to_email, otp):
-    """Sends a real OTP to the user's Gmail via Google SMTP (port 587, STARTTLS). Returns True/False."""
-    if not GMAIL_ADDRESS or not GMAIL_APP_PASSWORD:
-        print("GMAIL credentials not set - cannot send real email.")
+    """Sends a real OTP using Brevo's HTTPS email API. Returns True/False."""
+    if not BREVO_API_KEY:
+        print("BREVO_API_KEY not set - cannot send real email.")
         return False
 
-    subject = "Your PROFITIX Verification Code"
-    body = f"""Hi,
-
-Your PROFITIX OTP verification code is: {otp}
-
-This code will expire in {OTP_EXPIRY_MINUTES} minutes. Do not share it with anyone.
-
-- Team PROFITIX
-"""
-    msg = MIMEText(body)
-    msg["Subject"] = subject
-    msg["From"] = GMAIL_ADDRESS
-    msg["To"] = to_email
+    url = "https://api.brevo.com/v3/smtp/email"
+    headers = {
+        "accept": "application/json",
+        "api-key": BREVO_API_KEY,
+        "content-type": "application/json"
+    }
+    payload = {
+        "sender": {"name": "PROFITIX", "email": SENDER_EMAIL},
+        "to": [{"email": to_email}],
+        "subject": "Your PROFITIX Verification Code",
+        "textContent": f"Your PROFITIX OTP is: {otp}\n\nThis code will expire in {OTP_EXPIRY_MINUTES} minutes. Do not share it with anyone.\n\n- Team PROFITIX"
+    }
 
     try:
-        context = ssl.create_default_context()
-        with smtplib.SMTP("smtp.gmail.com", 587, timeout=15) as server:
-            server.ehlo()
-            server.starttls(context=context)
-            server.ehlo()
-            server.login(GMAIL_ADDRESS, GMAIL_APP_PASSWORD)
-            server.sendmail(GMAIL_ADDRESS, to_email, msg.as_string())
-        return True
+        resp = requests.post(url, headers=headers, json=payload, timeout=15)
+        if resp.status_code in (200, 201):
+            return True
+        print("Brevo API error:", resp.status_code, resp.text)
+        return False
     except Exception as e:
         print("Email send error:", repr(e))
         return False
