@@ -55,13 +55,13 @@ ADMIN_SUPPORT_GC = os.environ.get("ADMIN_SUPPORT_GC", "")
 ADMIN_PAYMENT_CHANNEL = os.environ.get("ADMIN_PAYMENT_CHANNEL", "@PROFITIX77")
 
 # --- Gmail SMTP settings (for sending real OTP emails) ---
-GMAIL_ADDRESS = os.environ.get("GMAIL_ADDRESS", "")       # e.g. yourapp@gmail.com
-GMAIL_APP_PASSWORD = os.environ.get("GMAIL_APP_PASSWORD", "")  # 16-char Gmail App Password
+GMAIL_ADDRESS = os.environ.get("GMAIL_ADDRESS", "")
+GMAIL_APP_PASSWORD = os.environ.get("GMAIL_APP_PASSWORD", "")
 OTP_EXPIRY_MINUTES = 5
 
 
 def send_otp_email(to_email, otp):
-    """Sends a real OTP to the user's Gmail via Google SMTP. Returns True/False."""
+    """Sends a real OTP to the user's Gmail via Google SMTP (port 587, STARTTLS). Returns True/False."""
     if not GMAIL_ADDRESS or not GMAIL_APP_PASSWORD:
         print("GMAIL credentials not set - cannot send real email.")
         return False
@@ -82,12 +82,15 @@ This code will expire in {OTP_EXPIRY_MINUTES} minutes. Do not share it with anyo
 
     try:
         context = ssl.create_default_context()
-        with smtplib.SMTP_SSL("smtp.gmail.com", 465, context=context) as server:
+        with smtplib.SMTP("smtp.gmail.com", 587, timeout=15) as server:
+            server.ehlo()
+            server.starttls(context=context)
+            server.ehlo()
             server.login(GMAIL_ADDRESS, GMAIL_APP_PASSWORD)
             server.sendmail(GMAIL_ADDRESS, to_email, msg.as_string())
         return True
     except Exception as e:
-        print("Email send error:", e)
+        print("Email send error:", repr(e))
         return False
 
 def generate_ref_code():
