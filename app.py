@@ -14,6 +14,9 @@ load_dotenv()  # reads .env file if present (local development)
 
 app = Flask(__name__, template_folder=".")
 app.secret_key = os.environ.get("SECRET_KEY", "dev-only-change-me")
+app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=30)
+app.config['SESSION_COOKIE_SECURE'] = True
+app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
 
 DB_FILE = "users.json"
 
@@ -203,6 +206,10 @@ def register():
             users_db[referred_by]['referrals'].append(username)
 
     save_data({"users": users_db, "withdrawals": withdrawals_db, "support_tickets": support_tickets_db, "notifications": notifications_db, "promo_codes": promo_codes_db})
+
+    session.permanent = True
+    session['user'] = username
+
     return jsonify({"status": "success", "message": "Account successfully create ho gaya!"})
 
 @app.route('/api/login', methods=['POST'])
@@ -213,6 +220,7 @@ def login():
 
     user = users_db.get(username)
     if user and user['password'] == password:
+        session.permanent = True
         session['user'] = username
         return jsonify({"status": "success", "message": "Logged in successfully!"})
 

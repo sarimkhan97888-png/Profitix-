@@ -1165,7 +1165,7 @@
             const data = await res.json();
             if(data.status === 'success') {
                 showToast(data.message, 'success');
-                switchAuthTab('login');
+                loadDashboard();
             } else {
                 showToast(data.message, 'error');
             }
