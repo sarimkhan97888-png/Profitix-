@@ -54,6 +54,8 @@
         .top-nav-bar {
             display: flex;
             justify-content: flex-end;
+            align-items: center;
+            gap: 8px;
             position: absolute;
             top: 16px;
             right: 16px;
@@ -119,6 +121,43 @@
         .notif-title-item:hover {
             background: #f1f5f9;
             border-color: #cbd5e1;
+        }
+        .more-menu-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 12px 10px;
+            border-radius: 10px;
+            cursor: pointer;
+            font-weight: 700;
+            font-size: 0.85rem;
+            color: #1e293b;
+            transition: all 0.2s;
+        }
+        .more-menu-item:hover {
+            background: #f1f5f9;
+        }
+        .more-menu-item i {
+            width: 20px;
+            text-align: center;
+            color: #4f46e5;
+        }
+
+        .generic-modal {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.5);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 9999;
+            padding: 20px;
+        }
+        .generic-modal.show {
+            display: flex;
         }
 
         #notif-modal {
@@ -548,6 +587,15 @@
 <body>
 
 <div class="top-nav-bar">
+    <div class="notification-bell-btn" onclick="toggleMoreMenu()">
+        <i class="fa-solid fa-ellipsis-vertical"></i>
+        <div class="notification-dropdown" id="more-dropdown" style="width: 200px;">
+            <div class="more-menu-item" onclick="openRedeemModal()"><i class="fa-solid fa-ticket"></i> Redeem Code</div>
+            <div class="more-menu-item" onclick="openLeaderboardModal()"><i class="fa-solid fa-trophy"></i> Leaderboard</div>
+            <div class="more-menu-item" onclick="showTab('history'); toggleMoreMenu()"><i class="fa-solid fa-clock-rotate-left"></i> History</div>
+            <div class="more-menu-item" onclick="showTab('support'); toggleMoreMenu()"><i class="fa-solid fa-headset"></i> Support</div>
+        </div>
+    </div>
     <div class="notification-bell-btn" onclick="toggleNotifications()">
         <i class="fa-solid fa-bell"></i>
         <div class="unread-dot" id="notif-unread-dot"></div>
@@ -559,6 +607,34 @@
             <div id="notifications-list-container">
                 <p style="text-align:center; color:#64748b; font-size:0.8rem;">Koi nayi notification nahi hai.</p>
             </div>
+        </div>
+    </div>
+</div>
+
+<div id="redeem-modal" class="generic-modal" onclick="closeGenericModal(event, 'redeem-modal')">
+    <div class="modal-content" onclick="event.stopPropagation()">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+            <h3 style="font-size:1.1rem; font-weight:800; color:#312e81;">🎟️ Redeem Code</h3>
+            <i class="fa-solid fa-xmark" style="cursor:pointer; font-size:1.2rem; color:#64748b;" onclick="closeGenericModal(null, 'redeem-modal')"></i>
+        </div>
+        <hr style="border:0; border-top:1px solid #e2e8f0; margin-bottom:14px;">
+        <p style="font-size: 0.8rem; color: #64748b; margin-bottom: 12px;">Telegram channel se promo code daal kar free balance claim karein:</p>
+        <div style="display:flex; gap:8px;">
+            <input type="text" id="promo-input-code" placeholder="ENTER CODE" style="text-transform:uppercase;">
+            <button class="btn-main" onclick="applyPromoCode()" style="width:110px; padding:10px;">Apply</button>
+        </div>
+    </div>
+</div>
+
+<div id="leaderboard-modal" class="generic-modal" onclick="closeGenericModal(event, 'leaderboard-modal')">
+    <div class="modal-content" onclick="event.stopPropagation()">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+            <h3 style="font-size:1.1rem; font-weight:800; color:#312e81;">🏆 Monthly Referral Leaderboard</h3>
+            <i class="fa-solid fa-xmark" style="cursor:pointer; font-size:1.2rem; color:#64748b;" onclick="closeGenericModal(null, 'leaderboard-modal')"></i>
+        </div>
+        <hr style="border:0; border-top:1px solid #e2e8f0; margin-bottom:14px;">
+        <div id="leaderboard-list-container">
+            <p style="text-align:center; color:#64748b; font-size:0.85rem;">Loading leaderboard...</p>
         </div>
     </div>
 </div>
@@ -652,15 +728,6 @@
                     <div class="checkin-box" id="chk-5">Day 5<br>₹0.05</div>
                     <div class="checkin-box" id="chk-6">Day 6<br>₹0.07</div>
                     <div class="checkin-box" id="chk-7">Day 7<br>₹0.10</div>
-                </div>
-            </div>
-
-            <div class="card">
-                <div style="font-weight: 800; font-size: 0.95rem; margin-bottom: 6px;">🎟️ Have Promo Code?</div>
-                <p style="font-size: 0.75rem; color: #64748b; margin-bottom: 10px;">Telegram channel se promo code daal kar free balance claim karein:</p>
-                <div style="display:flex; gap:8px;">
-                    <input type="text" id="promo-input-code" placeholder="ENTER CODE" style="text-transform:uppercase;">
-                    <button class="btn-main" onclick="applyPromoCode()" style="width:110px; padding:10px;">Apply</button>
                 </div>
             </div>
 
@@ -772,14 +839,6 @@
                 </div>
 
                 <button class="btn-share" onclick="shareRefLink()"><i class="fa-solid fa-share-nodes"></i> Share Link</button>
-            </div>
-
-            <div class="card" style="margin-top: 16px;">
-                <h4 style="font-size: 1rem; font-weight: 800; margin-bottom: 4px;">🏆 Monthly Referral Leaderboard</h4>
-                <p style="font-size: 0.75rem; color: #64748b; margin-bottom: 12px;">Top successful referrers of this month:</p>
-                <div id="leaderboard-list-container">
-                    <p style="text-align:center; color:#64748b; font-size:0.85rem;">Loading leaderboard...</p>
-                </div>
             </div>
 
             <div class="card" style="margin-top: 16px;">
@@ -972,6 +1031,28 @@
     function toggleNotifications() {
         const dropdown = document.getElementById('notif-dropdown');
         dropdown.classList.toggle('show');
+        document.getElementById('more-dropdown').classList.remove('show');
+    }
+
+    function toggleMoreMenu() {
+        const dropdown = document.getElementById('more-dropdown');
+        dropdown.classList.toggle('show');
+        document.getElementById('notif-dropdown').classList.remove('show');
+    }
+
+    function openRedeemModal() {
+        document.getElementById('redeem-modal').classList.add('show');
+        document.getElementById('more-dropdown').classList.remove('show');
+    }
+
+    function openLeaderboardModal() {
+        document.getElementById('leaderboard-modal').classList.add('show');
+        document.getElementById('more-dropdown').classList.remove('show');
+    }
+
+    function closeGenericModal(event, modalId) {
+        if (event && event.target.id !== modalId) return;
+        document.getElementById(modalId).classList.remove('show');
     }
 
     function markNotificationsRead() {
