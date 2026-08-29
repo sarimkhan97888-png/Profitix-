@@ -83,6 +83,26 @@ promo_codes_db = db.get("promo_codes", {})
 otp_db = {}
 broadcast_sessions = {}
 
+# --- Migrate old notifications (no id/likes/comments) so like & comment features work on old data ---
+_notif_migrated = False
+for _i, _n in enumerate(notifications_db):
+    if "id" not in _n:
+        _n["id"] = _i + 1
+        _notif_migrated = True
+    if "likes" not in _n:
+        _n["likes"] = []
+        _notif_migrated = True
+    if "comments" not in _n:
+        _n["comments"] = []
+        _notif_migrated = True
+if _notif_migrated:
+    save_data({"users": users_db, "withdrawals": withdrawals_db, "support_tickets": support_tickets_db, "notifications": notifications_db, "promo_codes": promo_codes_db})
+
+def next_notif_id():
+    if not notifications_db:
+        return 1
+    return max(n.get("id", 0) for n in notifications_db) + 1
+
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 ADMIN_CHAT_ID = os.environ.get("ADMIN_CHAT_ID", "")
 ADMIN_SUPPORT_GC = os.environ.get("ADMIN_SUPPORT_GC", "")
@@ -376,14 +396,29 @@ def user_data():
 
     leaderboard_data = sorted(leaderboard_data, key=lambda x: x['score'], reverse=True)[:10]
 
+    notifications_out = []
+    for n in notifications_db:
+        likes = n.get('likes', [])
+        notifications_out.append({
+            "id": n.get('id'),
+            "title": n.get('title'),
+            "message": n.get('message'),
+            "image": n.get('image', ''),
+            "like_count": len(likes),
+            "liked_by_me": username in likes,
+            "comments": n.get('comments', [])
+        })
+
     return jsonify({
         "status": "success",
+        "username": username,
+        "email": user.get('email', ''),
         "balance": user['balance'],
         "referral_code": user['referral_code'],
         "total_referrals": len(user['referrals']),
         "referral_history": referral_details,
         "support_tickets": [t for t in support_tickets_db if t.get('username') == username],
-        "notifications": notifications_db,
+        "notifications": notifications_out,
         "leaderboard": leaderboard_data,
         "checkin_day": user['checkin_day'],
         "last_checkin_date": user['last_checkin_date']
@@ -659,9 +694,12 @@ def support_ticket():
 def add_notification(title, message, image=""):
     global notifications_db
     new_notif = {
+        "id": next_notif_id(),
         "title": title,
         "message": message,
-        "image": image
+        "image": image,
+        "likes": [],
+        "comments": []
     }
     notifications_db.append(new_notif)
 
@@ -669,6 +707,64 @@ def add_notification(title, message, image=""):
         notifications_db.pop(0)
 
     save_data({"users": users_db, "withdrawals": withdrawals_db, "support_tickets": support_tickets_db, "notifications": notifications_db, "promo_codes": promo_codes_db})
+
+@app.route('/api/notification/like', methods=['POST'])
+def notification_like():
+    username = session.get('user')
+    if not username:
+        return jsonify({"status": "error", "message": "Please log in first"})
+
+    data = request.json
+    try:
+        notif_id = int(data.get('id'))
+    except (TypeError, ValueError):
+        return jsonify({"status": "error", "message": "Invalid notification"})
+
+    for n in notifications_db:
+        if n.get('id') == notif_id:
+            likes = n.setdefault('likes', [])
+            if username in likes:
+                likes.remove(username)
+                liked = False
+            else:
+                likes.append(username)
+                liked = True
+            save_data({"users": users_db, "withdrawals": withdrawals_db, "support_tickets": support_tickets_db, "notifications": notifications_db, "promo_codes": promo_codes_db})
+            return jsonify({"status": "success", "liked": liked, "like_count": len(likes)})
+
+    return jsonify({"status": "error", "message": "Notification not found"})
+
+@app.route('/api/notification/comment', methods=['POST'])
+def notification_comment():
+    username = session.get('user')
+    if not username:
+        return jsonify({"status": "error", "message": "Please log in first"})
+
+    data = request.json
+    try:
+        notif_id = int(data.get('id'))
+    except (TypeError, ValueError):
+        return jsonify({"status": "error", "message": "Invalid notification"})
+
+    text = data.get('text', '').strip()
+    if not text:
+        return jsonify({"status": "error", "message": "Comment khaali nahi ho sakta!"})
+    text = text[:300]
+
+    for n in notifications_db:
+        if n.get('id') == notif_id:
+            comments = n.setdefault('comments', [])
+            comments.append({
+                "username": username,
+                "text": text,
+                "date": datetime.now().strftime("%Y-%m-%d %H:%M")
+            })
+            if len(comments) > 100:
+                comments.pop(0)
+            save_data({"users": users_db, "withdrawals": withdrawals_db, "support_tickets": support_tickets_db, "notifications": notifications_db, "promo_codes": promo_codes_db})
+            return jsonify({"status": "success", "comments": comments})
+
+    return jsonify({"status": "error", "message": "Notification not found"})
 
 @app.route('/api/telegram_webhook', methods=['POST'])
 def telegram_webhook():

@@ -39,7 +39,7 @@
             background-color: #f4f6fb;
             color: #1e293b;
             min-height: 100vh;
-            padding-bottom: 80px;
+            padding-bottom: 24px;
             display: flex;
             justify-content: center;
         }
@@ -143,6 +143,71 @@
             color: #4f46e5;
         }
 
+        /* --- New top bar layout: profile (left), 3-dot menu + bell (right, stacked) --- */
+        .top-nav-bar {
+            position: absolute;
+            top: 16px;
+            left: 16px;
+            right: 16px;
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            z-index: 100;
+        }
+        .top-nav-right {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            align-items: flex-end;
+        }
+        .menu-list-dropdown {
+            width: 210px;
+        }
+        .support-icon-row {
+            display: flex;
+            justify-content: center;
+            padding-top: 10px;
+            margin-top: 4px;
+            border-top: 1px solid #e2e8f0;
+        }
+        .support-icon-btn {
+            width: 42px;
+            height: 42px;
+            border-radius: 50%;
+            background: #4f46e5;
+            color: #ffffff;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.05rem;
+            cursor: pointer;
+            box-shadow: 0 4px 10px rgba(79, 70, 229, 0.3);
+        }
+        .profile-dropdown {
+            width: 220px;
+        }
+
+        /* --- Notification page: like + comments --- */
+        .like-btn {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 0.85rem;
+            font-weight: 700;
+            color: #64748b;
+            cursor: pointer;
+        }
+        .like-btn.liked {
+            color: #ef4444;
+        }
+        .comment-item {
+            padding: 8px 0;
+            border-bottom: 1px solid #f1f5f9;
+        }
+        .comment-item:last-child {
+            border-bottom: none;
+        }
+
         .generic-modal {
             position: fixed;
             top: 0;
@@ -160,22 +225,6 @@
             display: flex;
         }
 
-        #notif-modal {
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: rgba(0,0,0,0.5);
-            display: none;
-            align-items: center;
-            justify-content: center;
-            z-index: 9999;
-            padding: 20px;
-        }
-        #notif-modal.show {
-            display: flex;
-        }
         .modal-content {
             background: #ffffff;
             width: 100%;
@@ -517,42 +566,6 @@
             width: 100%;
         }
 
-        .bottom-nav {
-            position: fixed;
-            bottom: 0;
-            left: 50%;
-            transform: translateX(-50%);
-            width: 100%;
-            max-width: 440px;
-            background: #ffffff;
-            border-top: 1px solid #e2e8f0;
-            display: flex;
-            justify-content: space-around;
-            padding: 8px 0;
-            box-shadow: 0 -4px 20px rgba(0,0,0,0.03);
-            z-index: 100;
-        }
-
-        .nav-item {
-            text-align: center;
-            color: #94a3b8;
-            font-size: 0.65rem;
-            font-weight: 600;
-            cursor: pointer;
-            padding: 4px 6px;
-            border-radius: 10px;
-        }
-
-        .nav-item i {
-            display: block;
-            font-size: 1.1rem;
-            margin-bottom: 3px;
-        }
-
-        .nav-item.active {
-            color: #4f46e5;
-        }
-
         /* Check-in styles */
         .checkin-grid {
             display: grid;
@@ -586,68 +599,43 @@
 </head>
 <body>
 
-<div class="top-nav-bar">
-    <div class="notification-bell-btn" onclick="toggleMoreMenu()">
-        <i class="fa-solid fa-ellipsis-vertical"></i>
-        <div class="notification-dropdown" id="more-dropdown" style="width: 200px;">
-            <div class="more-menu-item" onclick="openRedeemModal()"><i class="fa-solid fa-ticket"></i> Redeem Code</div>
-            <div class="more-menu-item" onclick="openLeaderboardModal()"><i class="fa-solid fa-trophy"></i> Leaderboard</div>
-            <div class="more-menu-item" onclick="showTab('history'); toggleMoreMenu()"><i class="fa-solid fa-clock-rotate-left"></i> History</div>
-            <div class="more-menu-item" onclick="showTab('support'); toggleMoreMenu()"><i class="fa-solid fa-headset"></i> Support</div>
-        </div>
-    </div>
-    <div class="notification-bell-btn" onclick="toggleNotifications()">
-        <i class="fa-solid fa-bell"></i>
-        <div class="unread-dot" id="notif-unread-dot"></div>
-        <div class="notification-dropdown" id="notif-dropdown">
-            <div style="font-weight: 800; font-size: 0.9rem; margin-bottom: 8px; color: #312e81; display:flex; justify-content:space-between; align-items:center;">
-                <span>Notifications</span>
-                <span style="font-size:0.7rem; color:#64748b; cursor:pointer;" onclick="markNotificationsRead()">Clear red tick</span>
-            </div>
-            <div id="notifications-list-container">
-                <p style="text-align:center; color:#64748b; font-size:0.8rem;">Koi nayi notification nahi hai.</p>
+<div class="top-nav-bar hidden" id="top-nav-bar">
+    <div class="top-nav-left">
+        <div class="notification-bell-btn" onclick="toggleProfileMenu()">
+            <i class="fa-solid fa-user"></i>
+            <div class="notification-dropdown profile-dropdown" id="profile-dropdown" style="left:0; right:auto;">
+                <div style="text-align:center; padding: 4px 4px 14px 4px; border-bottom:1px solid #e2e8f0; margin-bottom:10px;">
+                    <div style="width:52px; height:52px; border-radius:50%; background:#e0e7ff; color:#4f46e5; display:flex; align-items:center; justify-content:center; font-size:1.4rem; margin:0 auto 8px auto;">
+                        <i class="fa-solid fa-user"></i>
+                    </div>
+                    <div style="font-weight:800; font-size:0.95rem; color:#1e293b;" id="profile-username">-</div>
+                    <div style="font-size:0.72rem; color:#64748b; margin-top:2px; word-break:break-all;" id="profile-email">-</div>
+                </div>
+                <button class="btn-main" style="background:#ef4444; box-shadow:none;" onclick="logout()"><i class="fa-solid fa-right-from-bracket"></i> Log Out</button>
             </div>
         </div>
     </div>
-</div>
 
-<div id="redeem-modal" class="generic-modal" onclick="closeGenericModal(event, 'redeem-modal')">
-    <div class="modal-content" onclick="event.stopPropagation()">
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
-            <h3 style="font-size:1.1rem; font-weight:800; color:#312e81;">🎟️ Redeem Code</h3>
-            <i class="fa-solid fa-xmark" style="cursor:pointer; font-size:1.2rem; color:#64748b;" onclick="closeGenericModal(null, 'redeem-modal')"></i>
+    <div class="top-nav-right">
+        <div class="notification-bell-btn" onclick="toggleMoreMenu()">
+            <i class="fa-solid fa-ellipsis-vertical"></i>
+            <div class="notification-dropdown menu-list-dropdown" id="more-dropdown">
+                <div class="more-menu-item" onclick="showTab('dashboard'); toggleMoreMenu()"><i class="fa-solid fa-house"></i> Home</div>
+                <div class="more-menu-item" onclick="showTab('referrals'); toggleMoreMenu()"><i class="fa-solid fa-user-group"></i> Refer</div>
+                <div class="more-menu-item" onclick="showTab('earn'); toggleMoreMenu()"><i class="fa-solid fa-list-check"></i> Task</div>
+                <div class="more-menu-item" onclick="showTab('withdraw'); toggleMoreMenu()"><i class="fa-solid fa-building-columns"></i> Withdraw</div>
+                <div class="more-menu-item" onclick="showTab('redeem'); toggleMoreMenu()"><i class="fa-solid fa-ticket"></i> Redeem Code</div>
+                <div class="support-icon-row">
+                    <div class="support-icon-btn" onclick="showTab('support'); toggleMoreMenu()" title="Support">
+                        <i class="fa-solid fa-headset"></i>
+                    </div>
+                </div>
+            </div>
         </div>
-        <hr style="border:0; border-top:1px solid #e2e8f0; margin-bottom:14px;">
-        <p style="font-size: 0.8rem; color: #64748b; margin-bottom: 12px;">Telegram channel se promo code daal kar free balance claim karein:</p>
-        <div style="display:flex; gap:8px;">
-            <input type="text" id="promo-input-code" placeholder="ENTER CODE" style="text-transform:uppercase;">
-            <button class="btn-main" onclick="applyPromoCode()" style="width:110px; padding:10px;">Apply</button>
+        <div class="notification-bell-btn" onclick="goToNotifications()">
+            <i class="fa-solid fa-bell"></i>
+            <div class="unread-dot" id="notif-unread-dot"></div>
         </div>
-    </div>
-</div>
-
-<div id="leaderboard-modal" class="generic-modal" onclick="closeGenericModal(event, 'leaderboard-modal')">
-    <div class="modal-content" onclick="event.stopPropagation()">
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
-            <h3 style="font-size:1.1rem; font-weight:800; color:#312e81;">🏆 Monthly Referral Leaderboard</h3>
-            <i class="fa-solid fa-xmark" style="cursor:pointer; font-size:1.2rem; color:#64748b;" onclick="closeGenericModal(null, 'leaderboard-modal')"></i>
-        </div>
-        <hr style="border:0; border-top:1px solid #e2e8f0; margin-bottom:14px;">
-        <div id="leaderboard-list-container">
-            <p style="text-align:center; color:#64748b; font-size:0.85rem;">Loading leaderboard...</p>
-        </div>
-    </div>
-</div>
-
-<div id="notif-modal" onclick="closeNotifModal(event)">
-    <div class="modal-content" onclick="event.stopPropagation()">
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
-            <h3 id="modal-notif-title" style="font-size:1.1rem; font-weight:800; color:#312e81;">Title</h3>
-            <i class="fa-solid fa-xmark" style="cursor:pointer; font-size:1.2rem; color:#64748b;" onclick="closeNotifModal()"></i>
-        </div>
-        <hr style="border:0; border-top:1px solid #e2e8f0; margin-bottom:10px;">
-        <div id="modal-notif-image-container" style="margin-bottom:10px;"></div>
-        <p id="modal-notif-message" style="font-size:0.9rem; color:#334155; line-height:1.4; word-break:break-word;"></p>
     </div>
 </div>
 
@@ -803,12 +791,10 @@
                     <button class="btn-copy" onclick="copyRefCode()"><i class="fa-solid fa-copy"></i> Copy</button>
                 </div>
             </div>
-
-            <button class="btn-main" onclick="logout()" style="background:#ef4444; margin-top:6px;">Log Out</button>
         </div>
 
         <div id="tab-page-earn" class="hidden">
-            <h3 style="font-size: 1.3rem; font-weight: 800; margin-bottom: 12px;">Earn Rewards</h3>
+            <h3 style="font-size: 1.3rem; font-weight: 800; margin-bottom: 12px;">Task</h3>
             <div class="card">
                 <div style="font-weight: 700; margin-bottom: 12px;">Watch Ad & Earn ₹0.10</div>
 
@@ -831,9 +817,9 @@
                 <h3 style="font-size: 1.1rem; font-weight: 800; margin-bottom: 10px; color: #fff;">📢 Join Our Official Channels</h3>
                 <p style="font-size: 0.75rem; color: #94a3b8; margin-bottom: 12px;">Updates, earning tricks aur payment proof ke liye join karein:</p>
                 <div style="display: flex; flex-direction: column; gap: 10px;">
-                    <a href="/join/group" target="_blank" style="background: #0088cc; color: white; padding: 12px; border-radius: 8px; text-decoration: none; font-weight: bold; font-size: 0.9rem;">PROFITIX Group</a>
-                    <a href="/join/earning" target="_blank" style="background: #0088cc; color: white; padding: 12px; border-radius: 8px; text-decoration: none; font-weight: bold; font-size: 0.9rem;">PROFITIX Earning</a>
-                    <a href="/join/payment" target="_blank" style="background: #0088cc; color: white; padding: 12px; border-radius: 8px; text-decoration: none; font-weight: bold; font-size: 0.9rem;">PROFITIX Payment</a>
+                    <a href="/join/group" target="_blank" style="background: #ffffff; color: #1e1e2f; padding: 12px; border-radius: 8px; text-decoration: none; font-weight: bold; font-size: 0.9rem; text-align:center;">PROFITIX Group</a>
+                    <a href="/join/earning" target="_blank" style="background: #ffffff; color: #1e1e2f; padding: 12px; border-radius: 8px; text-decoration: none; font-weight: bold; font-size: 0.9rem; text-align:center;">PROFITIX Earning</a>
+                    <a href="/join/payment" target="_blank" style="background: #ffffff; color: #1e1e2f; padding: 12px; border-radius: 8px; text-decoration: none; font-weight: bold; font-size: 0.9rem; text-align:center;">PROFITIX Payment</a>
                 </div>
             </div>
 
@@ -867,6 +853,13 @@
                 </div>
 
                 <button class="btn-share" onclick="shareRefLink()"><i class="fa-solid fa-share-nodes"></i> Share Link</button>
+            </div>
+
+            <div class="card" style="margin-top: 16px;">
+                <h4 style="font-size: 1rem; font-weight: 800; margin-bottom: 10px;">🏆 Monthly Leaderboard</h4>
+                <div id="leaderboard-list-container">
+                    <p style="text-align:center; color:#64748b; font-size:0.85rem;">Loading leaderboard...</p>
+                </div>
             </div>
 
             <div class="card" style="margin-top: 16px;">
@@ -938,6 +931,12 @@
                 <button class="btn-main" onclick="withdraw()" style="margin-top:8px;">Request Withdrawal</button>
             </div>
 
+            <div class="card">
+                <h4 style="font-size: 1rem; font-weight: 800; margin-bottom: 2px;">Withdrawal History</h4>
+                <p style="font-size:0.75rem; color:#64748b; margin-bottom:10px;">Track your withdrawals and status.</p>
+                <div id="history-list-container"></div>
+            </div>
+
             <div class="ad-banner-box">
                 <ins class="adsbygoogle"
                      style="display:block"
@@ -951,21 +950,23 @@
             </div>
         </div>
 
-        <div id="tab-page-history" class="hidden">
-            <h3 style="font-size: 1.3rem; font-weight: 800; margin-bottom: 2px;">Transaction History</h3>
-            <p style="font-size:0.8rem; color:#64748b; margin-bottom:12px;">Track your withdrawals and status.</p>
-            <div id="history-list-container"></div>
+        <div id="tab-page-redeem" class="hidden">
+            <h3 style="font-size: 1.3rem; font-weight: 800; margin-bottom: 4px;">Redeem Code</h3>
+            <p style="font-size:0.8rem; color:#64748b; margin-bottom:12px;">Telegram channel se promo code daal kar free balance claim karein.</p>
+            <div class="card">
+                <div class="input-group">
+                    <label>Promo Code</label>
+                    <input type="text" id="promo-input-code" placeholder="ENTER CODE" style="text-transform:uppercase;">
+                </div>
+                <button class="btn-main" onclick="applyPromoCode()">Apply Code</button>
+            </div>
+        </div>
 
-            <div class="ad-banner-box">
-                <ins class="adsbygoogle"
-                     style="display:block"
-                     data-ad-client="ca-pub-5117289399435886"
-                     data-ad-slot="auto"
-                     data-ad-format="auto"
-                     data-full-width-responsive="true"></ins>
-                <script>
-                     (adsbygoogle = window.adsbygoogle || []).push({});
-                </script>
+        <div id="tab-page-notifications" class="hidden">
+            <h3 style="font-size: 1.3rem; font-weight: 800; margin-bottom: 4px;">Notifications</h3>
+            <p style="font-size:0.8rem; color:#64748b; margin-bottom:12px;">Latest updates — like and comment on them.</p>
+            <div id="notifications-page-container">
+                <p style="text-align:center; color:#64748b; font-size:0.85rem;">Koi nayi notification nahi hai.</p>
             </div>
         </div>
 
@@ -1014,15 +1015,6 @@
             </div>
         </div>
 
-        <div class="bottom-nav">
-            <div class="nav-item active" id="nav-dashboard" onclick="showTab('dashboard')"><i class="fa-solid fa-house"></i>Home</div>
-            <div class="nav-item" id="nav-earn" onclick="showTab('earn')"><i class="fa-solid fa-circle-play"></i>Earn</div>
-            <div class="nav-item" id="nav-referrals" onclick="showTab('referrals')"><i class="fa-solid fa-user-group"></i>Refer</div>
-            <div class="nav-item" id="nav-withdraw" onclick="showTab('withdraw')"><i class="fa-solid fa-building-columns"></i>Withdraw</div>
-            <div class="nav-item" id="nav-history" onclick="showTab('history')"><i class="fa-solid fa-history"></i>History</div>
-            <div class="nav-item" id="nav-support" onclick="showTab('support')"><i class="fa-solid fa-headset"></i>Support</div>
-        </div>
-
     </div>
 
 </div>
@@ -1056,26 +1048,21 @@
         setTimeout(() => { toast.classList.remove('show'); }, 3500);
     }
 
-    function toggleNotifications() {
-        const dropdown = document.getElementById('notif-dropdown');
-        dropdown.classList.toggle('show');
-        document.getElementById('more-dropdown').classList.remove('show');
-    }
-
     function toggleMoreMenu() {
-        const dropdown = document.getElementById('more-dropdown');
-        dropdown.classList.toggle('show');
-        document.getElementById('notif-dropdown').classList.remove('show');
+        document.getElementById('more-dropdown').classList.toggle('show');
+        document.getElementById('profile-dropdown').classList.remove('show');
     }
 
-    function openRedeemModal() {
-        document.getElementById('redeem-modal').classList.add('show');
+    function toggleProfileMenu() {
+        document.getElementById('profile-dropdown').classList.toggle('show');
         document.getElementById('more-dropdown').classList.remove('show');
     }
 
-    function openLeaderboardModal() {
-        document.getElementById('leaderboard-modal').classList.add('show');
+    function goToNotifications() {
         document.getElementById('more-dropdown').classList.remove('show');
+        document.getElementById('profile-dropdown').classList.remove('show');
+        showTab('notifications');
+        markNotificationsRead();
     }
 
     function closeGenericModal(event, modalId) {
@@ -1086,28 +1073,6 @@
     function markNotificationsRead() {
         document.getElementById('notif-unread-dot').style.display = 'none';
         localStorage.setItem('profitix_notif_read_count', globalNotifications.length);
-    }
-
-    function openNotifModal(index) {
-        const notif = globalNotifications[index];
-        if(!notif) return;
-
-        document.getElementById('modal-notif-title').innerText = notif.title;
-        document.getElementById('modal-notif-message').innerText = notif.message;
-
-        const imgContainer = document.getElementById('modal-notif-image-container');
-        if(notif.image) {
-            imgContainer.innerHTML = `<img src="${notif.image}" style="width:100%; max-height:220px; object-fit:cover; border-radius:12px;">`;
-        } else {
-            imgContainer.innerHTML = '';
-        }
-
-        document.getElementById('notif-modal').classList.add('show');
-        document.getElementById('notif-dropdown').classList.remove('show');
-    }
-
-    function closeNotifModal() {
-        document.getElementById('notif-modal').classList.remove('show');
     }
 
     function switchAuthTab(type) {
@@ -1264,6 +1229,9 @@
         if(data.status === 'success') {
             document.getElementById('auth-section').classList.add('hidden');
             document.getElementById('dashboard-section').classList.remove('hidden');
+            document.getElementById('top-nav-bar').classList.remove('hidden');
+            document.getElementById('profile-username').innerText = data.username || '-';
+            document.getElementById('profile-email').innerText = data.email || '-';
             document.getElementById('u-balance').innerText = data.balance.toFixed(2);
             document.getElementById('w-balance').innerText = data.balance.toFixed(2);
             document.getElementById('u-total-earned').innerText = data.balance.toFixed(2);
@@ -1365,7 +1333,6 @@
 
     function loadNotifications(notifs) {
         globalNotifications = notifs || [];
-        const container = document.getElementById('notifications-list-container');
         const lastReadCount = parseInt(localStorage.getItem('profitix_notif_read_count') || '0');
 
         if (globalNotifications.length > lastReadCount) {
@@ -1374,21 +1341,99 @@
             document.getElementById('notif-unread-dot').style.display = 'none';
         }
 
+        renderNotificationsPage();
+    }
+
+    function renderNotificationsPage() {
+        const container = document.getElementById('notifications-page-container');
+        if(!container) return;
+
         if(!globalNotifications || globalNotifications.length === 0) {
-            container.innerHTML = `<p style="text-align:center; color:#64748b; font-size:0.8rem;">Koi nayi notification nahi hai.</p>`;
+            container.innerHTML = `<p style="text-align:center; color:#64748b; font-size:0.85rem;">Koi nayi notification nahi hai.</p>`;
             return;
         }
 
         let html = '';
-        globalNotifications.slice().reverse().forEach((n, idx) => {
-            const originalIndex = globalNotifications.length - 1 - idx;
+        globalNotifications.slice().reverse().forEach(n => {
+            const imgHtml = n.image ? `<img src="${n.image}" style="width:100%; max-height:220px; object-fit:cover; border-radius:12px; margin-bottom:10px;">` : '';
+
+            let commentsHtml = '';
+            (n.comments || []).forEach(c => {
+                commentsHtml += `
+                    <div class="comment-item">
+                        <span style="font-weight:700; font-size:0.8rem; color:#312e81;">${c.username}</span>
+                        <span style="font-size:0.72rem; color:#94a3b8; margin-left:6px;">${c.date || ''}</span>
+                        <div style="font-size:0.82rem; color:#334155; margin-top:2px;">${c.text}</div>
+                    </div>
+                `;
+            });
+
             html += `
-                <div class="notif-title-item" onclick="openNotifModal(${originalIndex})">
-                    <i class="fa-solid fa-bullhorn" style="color:#4f46e5; margin-right:6px;"></i> ${n.title}
+                <div class="card">
+                    <div style="font-weight:800; font-size:1rem; color:#312e81; margin-bottom:8px;">
+                        <i class="fa-solid fa-bullhorn" style="margin-right:6px;"></i>${n.title}
+                    </div>
+                    ${imgHtml}
+                    <p style="font-size:0.88rem; color:#334155; line-height:1.4; margin-bottom:10px;">${n.message}</p>
+                    <div style="display:flex; align-items:center; gap:18px; padding-top:8px; border-top:1px solid #f1f5f9;">
+                        <div class="like-btn ${n.liked_by_me ? 'liked' : ''}" onclick="toggleLike(${n.id}, this)">
+                            <i class="fa-${n.liked_by_me ? 'solid' : 'regular'} fa-heart"></i> <span class="like-count">${n.like_count || 0}</span>
+                        </div>
+                        <div style="color:#64748b; font-size:0.85rem; font-weight:700; display:flex; align-items:center; gap:6px;">
+                            <i class="fa-regular fa-comment"></i> ${(n.comments || []).length}
+                        </div>
+                    </div>
+                    <div style="margin-top:8px;">${commentsHtml}</div>
+                    <div style="display:flex; gap:8px; margin-top:10px;">
+                        <input type="text" placeholder="Comment likhein..." id="comment-input-${n.id}">
+                        <button class="btn-copy" onclick="submitComment(${n.id})"><i class="fa-solid fa-paper-plane"></i></button>
+                    </div>
                 </div>
             `;
         });
         container.innerHTML = html;
+    }
+
+    async function toggleLike(id, el) {
+        const res = await fetch('/api/notification/like', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ id })
+        });
+        const data = await res.json();
+        if(data.status === 'success') {
+            const notif = globalNotifications.find(n => n.id === id);
+            if(notif) {
+                notif.liked_by_me = data.liked;
+                notif.like_count = data.like_count;
+            }
+            el.classList.toggle('liked', data.liked);
+            el.querySelector('i').className = data.liked ? 'fa-solid fa-heart' : 'fa-regular fa-heart';
+            el.querySelector('.like-count').innerText = data.like_count;
+        } else {
+            showToast(data.message, 'error');
+        }
+    }
+
+    async function submitComment(id) {
+        const input = document.getElementById(`comment-input-${id}`);
+        const text = input.value.trim();
+        if(!text) return showToast('Kripya comment likhein!', 'error');
+
+        const res = await fetch('/api/notification/comment', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ id, text })
+        });
+        const data = await res.json();
+        if(data.status === 'success') {
+            const notif = globalNotifications.find(n => n.id === id);
+            if(notif) notif.comments = data.comments;
+            renderNotificationsPage();
+            showToast('Comment add ho gaya!', 'success');
+        } else {
+            showToast(data.message, 'error');
+        }
     }
 
     function loadReferralHistory(historyList) {
@@ -1469,15 +1514,19 @@
     }
 
     function showTab(tabName) {
-        ['dashboard', 'earn', 'referrals', 'withdraw', 'history', 'support'].forEach(tab => {
-            document.getElementById(`tab-page-${tab}`).classList.add('hidden');
-            document.getElementById(`nav-${tab}`).classList.remove('active');
+        ['dashboard', 'earn', 'referrals', 'withdraw', 'redeem', 'notifications', 'support'].forEach(tab => {
+            const page = document.getElementById(`tab-page-${tab}`);
+            if(page) page.classList.add('hidden');
         });
-        document.getElementById(`tab-page-${tabName}`).classList.remove('hidden');
-        document.getElementById(`nav-${tabName}`).classList.add('active');
-        if(tabName === 'history') loadHistory();
+        const activePage = document.getElementById(`tab-page-${tabName}`);
+        if(activePage) activePage.classList.remove('hidden');
+
+        if(tabName === 'withdraw') loadHistory();
         if(tabName === 'support') loadDashboard();
         if(tabName === 'referrals') loadDashboard();
+        if(tabName === 'notifications') renderNotificationsPage();
+
+        window.scrollTo(0, 0);
     }
 
     function copyRefCode() {
@@ -1641,6 +1690,7 @@
         } else {
             document.getElementById('auth-section').classList.remove('hidden');
             document.getElementById('dashboard-section').classList.add('hidden');
+            document.getElementById('top-nav-bar').classList.add('hidden');
         }
     }
 
