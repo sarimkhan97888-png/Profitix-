@@ -6,6 +6,7 @@ import os
 import requests
 import smtplib
 import ssl
+import certifi
 from email.mime.text import MIMEText
 from datetime import datetime, date, timedelta
 from dotenv import load_dotenv
@@ -26,7 +27,7 @@ MONGODB_URI = os.environ.get("MONGODB_URI", "")
 mongo_collection = None
 if MONGODB_URI:
     try:
-        _mongo_client = MongoClient(MONGODB_URI)
+        _mongo_client = MongoClient(MONGODB_URI, tlsCAFile=certifi.where())
         mongo_collection = _mongo_client.get_database("profitix").get_collection("app_data")
     except Exception as e:
         print("Mongo connection error:", repr(e))
