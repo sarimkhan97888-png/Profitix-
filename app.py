@@ -358,6 +358,9 @@ def handle_group_points_message(user_id, chat_id, msg):
 
         spam_reason = check_realtime_spam(entry)
         if spam_reason:
+            entry["points"] = max(0, entry["points"] - 20)
+            save_all()
+            send_tg_message(chat_id, "⚠️ Aapne cheating ki hai — spam/duplicate messages detect hue, isliye 20 points kaat diye gaye hain. Aage se normal messages bhejein.", msg_id)
             maybe_alert_admin(user_id, entry, spam_reason)
 
 # --- Email OTP via Brevo API (HTTPS-based — works on Render, unlike raw SMTP which Render blocks) ---
