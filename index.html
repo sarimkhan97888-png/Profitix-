@@ -1725,6 +1725,12 @@
     }
 
     initApp();
+
+    // Failsafe: no matter what happens above, never let the loading screen block the UI forever
+    setTimeout(function() {
+        const loader = document.getElementById('app-loading-screen');
+        if(loader) loader.classList.add('hidden');
+    }, 12000);
 </script>
 
 </body>
