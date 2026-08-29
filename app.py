@@ -128,7 +128,7 @@ ADMIN_PAYMENT_CHANNEL = os.environ.get("ADMIN_PAYMENT_CHANNEL", "@PROFITIX77")
 # (this is usually a negative number for groups, e.g. -1001234567890).
 POINTS_GC_CHAT_ID = os.environ.get("POINTS_GC_CHAT_ID", "")
 POINT_VALUE = float(os.environ.get("POINT_VALUE", "0.001"))         # ₹ credited per point on redeem (10000 pts = ₹10)
-POINTS_REDEEM_THRESHOLD = int(os.environ.get("POINTS_REDEEM_THRESHOLD", "10000"))
+POINTS_REDEEM_THRESHOLD = int(os.environ.get("POINTS_REDEEM_THRESHOLD", "50"))
 
 def get_point_entry(tg_user_id):
     if tg_user_id not in telegram_points_db:
@@ -306,7 +306,7 @@ def handle_group_points_message(user_id, chat_id, msg):
                 else:
                     send_tg_message(chat_id, f"⚠️ Aapke paas sirf {pts} points hain. Redeem ke liye kam se kam {POINTS_REDEEM_THRESHOLD} points chahiye.", msg_id)
             else:
-                send_tg_message(chat_id, "❌ Ye Gmail kisi PROFITIX website account se match nahi hui. Pehle website par register/login karke sahi registered Gmail reply karein.", msg_id)
+                send_tg_message(chat_id, "❌ Account nahi mila. Pehle register karein: https://profitix.onrender.com\nPhir yahan bhejein: /link sarimkhan@gmail.com", msg_id)
         else:
             send_tg_message(chat_id, "⚠️ Ye valid Gmail nahi lagi. Kripya apni registered Gmail address reply karein.", msg_id)
         del redeem_sessions[user_id]
@@ -328,7 +328,7 @@ def handle_group_points_message(user_id, chat_id, msg):
                 save_all()
                 send_tg_message(chat_id, f"✅ Aapka account ({matched_username}) is Telegram se link ho gaya! Points ginte rahenge.", msg_id)
             else:
-                send_tg_message(chat_id, "❌ Ye Gmail kisi PROFITIX website account se match nahi hui.", msg_id)
+                send_tg_message(chat_id, "❌ Account nahi mila. Pehle register karein: https://profitix.onrender.com\nPhir yahan bhejein: /link sarimkhan@gmail.com", msg_id)
         else:
             send_tg_message(chat_id, "Sahi format: /link yourgmail@gmail.com", msg_id)
 
