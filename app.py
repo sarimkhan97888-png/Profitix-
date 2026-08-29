@@ -3,6 +3,7 @@ import random
 import string
 import json
 import os
+import time
 import requests
 import smtplib
 import ssl
@@ -151,15 +152,18 @@ def find_username_by_email(email):
             return uname
     return None
 
-def find_point_entry_by_tg_username(tg_username):
-    tg_username = tg_username.strip().lstrip('@').lower()
+def find_point_entry_by_website_username(query):
+    """Looks up a point entry by the linked PROFITIX website username (set when the user
+    used /link or /redeem with their registered Gmail)."""
+    query = query.strip().lstrip('@').lower()
     for uid, entry in telegram_points_db.items():
-        if (entry.get("tg_username") or "").lower() == tg_username:
+        if (entry.get("username") or "").lower() == query:
             return uid, entry
     return None, None
 
 def analyze_cheating(entry):
-    """Basic spam/farming heuristics based on the user's logged group messages."""
+    """Spam/farming heuristics based on the user's logged group messages. Tuned strict —
+    even small patterns of repeated/junk/fast messages get flagged."""
     log = entry.get("message_log", [])
     total = len(log)
     if total == 0:
@@ -176,6 +180,8 @@ def analyze_cheating(entry):
     short_count = sum(1 for t in texts if len(t) <= 2)
     short_ratio = short_count / total
 
+    unique_ratio = len(set(texts)) / total
+
     times = []
     for m in log:
         try:
@@ -183,23 +189,88 @@ def analyze_cheating(entry):
         except (TypeError, ValueError):
             pass
     times.sort()
-    burst_count = sum(1 for i in range(1, len(times)) if (times[i] - times[i - 1]) < 2)
+    burst_count = sum(1 for i in range(1, len(times)) if (times[i] - times[i - 1]) < 3)
     burst_ratio = (burst_count / total) if total else 0
 
+    # Longest run of consecutive identical messages (in send order)
+    max_streak = 1
+    cur_streak = 1
+    for i in range(1, len(texts)):
+        if texts[i] and texts[i] == texts[i - 1]:
+            cur_streak += 1
+            max_streak = max(max_streak, cur_streak)
+        else:
+            cur_streak = 1
+
     flags = []
-    if duplicate_ratio >= 0.4:
+    if duplicate_ratio >= 0.2:
         preview = most_common_text[:25] if most_common_text else "(khaali)"
         flags.append(f"⚠️ {round(duplicate_ratio * 100)}% messages same/duplicate hain — '{preview}'")
-    if short_ratio >= 0.5:
+    if max_streak >= 3:
+        flags.append(f"⚠️ Lagatar {max_streak} baar wahi same message bheja — repeat-spam pattern")
+    if short_ratio >= 0.25:
         flags.append(f"⚠️ {round(short_ratio * 100)}% messages bahut chhote/junk (1-2 characters) hain")
-    if burst_ratio >= 0.3:
-        flags.append(f"⚠️ {round(burst_ratio * 100)}% messages 2 second se kam gap me bheje gaye — spam pattern lagta hai")
+    if burst_ratio >= 0.15:
+        flags.append(f"⚠️ {round(burst_ratio * 100)}% messages 3 second se kam gap me bheje gaye — spam pattern lagta hai")
+    if total >= 10 and unique_ratio <= 0.4:
+        flags.append(f"⚠️ Sirf {round(unique_ratio * 100)}% messages unique hain — bahut kam variety, farming jaisa lagta hai")
 
     suspicious = len(flags) > 0
     if not flags:
         flags.append("✅ Koi spam/duplicate/burst pattern nahi mila — normal lag raha hai.")
 
     return suspicious, flags, total
+
+ALERT_COOLDOWN_SECONDS = 1800  # don't re-alert the same user more than once per 30 min
+
+def check_realtime_spam(entry):
+    """Runs after every earned point on the last few messages, for immediate spam detection.
+    Returns a short reason string if something looks suspicious right now, else None."""
+    log = entry.get("message_log", [])
+    if len(log) < 3:
+        return None
+
+    recent_texts = [(m.get("text") or "").strip().lower() for m in log[-5:]]
+
+    # 3+ identical messages in a row = repeat-spam
+    if len(recent_texts) >= 3 and recent_texts[-1] and recent_texts[-1] == recent_texts[-2] == recent_texts[-3]:
+        return f"Lagatar same message bhej raha hai: '{recent_texts[-1][:30]}'"
+
+    # 4 messages fired within a 5 second window = flooding
+    times = []
+    for m in log[-4:]:
+        try:
+            times.append(float(m.get("ts", 0)))
+        except (TypeError, ValueError):
+            pass
+    if len(times) >= 4 and (times[-1] - times[0]) < 5:
+        return "Bahut fast/lagatar messages bhej raha hai (spam ya bot jaisa)"
+
+    # 3+ back-to-back junk/short messages
+    if len(recent_texts) >= 3 and all(len(t) <= 2 for t in recent_texts[-3:]):
+        return "Lagatar chhote/faltu (1-2 character) messages bhej raha hai"
+
+    return None
+
+def maybe_alert_admin(user_id, entry, reason):
+    if not ADMIN_CHAT_ID or not reason:
+        return
+    now = time.time()
+    if now - entry.get("last_alert_ts", 0) < ALERT_COOLDOWN_SECONDS:
+        return
+    entry["last_alert_ts"] = now
+    save_all()
+
+    uname = entry.get("username") or "Not linked"
+    tgname = entry.get("tg_username") or "unknown"
+    alert_text = (
+        f"🚨 Cheating alert!\n"
+        f"Telegram: @{tgname}\n"
+        f"Website username: {uname}\n"
+        f"Points: {entry.get('points', 0)}\n"
+        f"Reason: {reason}"
+    )
+    send_tg_message(ADMIN_CHAT_ID, alert_text)
 
 def handle_group_points_message(user_id, chat_id, msg):
     """Handles the 'message = point' group-chat earning system: point counting,
@@ -284,6 +355,10 @@ def handle_group_points_message(user_id, chat_id, msg):
         if len(log) > 60:
             del log[0]
         save_all()
+
+        spam_reason = check_realtime_spam(entry)
+        if spam_reason:
+            maybe_alert_admin(user_id, entry, spam_reason)
 
 # --- Email OTP via Brevo API (HTTPS-based — works on Render, unlike raw SMTP which Render blocks) ---
 BREVO_API_KEY = os.environ.get("BREVO_API_KEY", "")
@@ -918,23 +993,23 @@ def telegram_webhook():
             if text.startswith("/check"):
                 parts = text.split(maxsplit=1)
                 if len(parts) < 2 or not parts[1].strip():
-                    send_tg_message(chat_id, "Sahi format use karein: /check username (jaise /check sarim122)")
+                    send_tg_message(chat_id, "Sahi format use karein: /check website_username (jaise /check sarim01)")
                     return jsonify({"status": "ok"})
 
                 query_username = parts[1].strip()
-                found_uid, found_entry = find_point_entry_by_tg_username(query_username)
+                found_uid, found_entry = find_point_entry_by_website_username(query_username)
 
                 if not found_entry:
-                    send_tg_message(chat_id, f"❌ '@{query_username.lstrip('@')}' group me nahi mila, ya usne abhi tak koi message nahi bheja hai.")
+                    send_tg_message(chat_id, f"❌ Website username '{query_username}' se koi Telegram account link nahi mila. User ne group me pehle 'redeem' ya '/link {query_username} wali Gmail' se apna account link kiya hoga tabhi ye milega.")
                     return jsonify({"status": "ok"})
 
                 suspicious, flags, total_logged = analyze_cheating(found_entry)
                 verdict = "🚩 SUSPICIOUS — cheating ho sakti hai" if suspicious else "✅ CLEAN — normal user lagta hai"
 
                 report_lines = [
-                    f"🔍 Report: @{query_username.lstrip('@')}",
+                    f"🔍 Report: {query_username}",
                     f"Points: {found_entry.get('points', 0)}",
-                    f"Linked account: {found_entry.get('username') or 'Not linked'}",
+                    f"Telegram: @{found_entry.get('tg_username') or 'unknown'}",
                     f"Analyzed messages: {total_logged} (last {min(total_logged, 60)})",
                     "",
                     verdict,
