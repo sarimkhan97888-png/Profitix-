@@ -221,8 +221,6 @@ def analyze_cheating(entry):
 
     return suspicious, flags, total
 
-ALERT_COOLDOWN_SECONDS = 1800  # don't re-alert the same user more than once per 30 min
-
 def check_realtime_spam(entry):
     """Runs after every earned point on the last few messages, for immediate spam detection.
     Returns a short reason string if something looks suspicious right now, else None."""
@@ -255,12 +253,6 @@ def check_realtime_spam(entry):
 def maybe_alert_admin(user_id, entry, reason):
     if not ADMIN_CHAT_ID or not reason:
         return
-    now = time.time()
-    if now - entry.get("last_alert_ts", 0) < ALERT_COOLDOWN_SECONDS:
-        return
-    entry["last_alert_ts"] = now
-    save_all()
-
     uname = entry.get("username") or "Not linked"
     tgname = entry.get("tg_username") or "unknown"
     alert_text = (
@@ -271,6 +263,17 @@ def maybe_alert_admin(user_id, entry, reason):
         f"Reason: {reason}"
     )
     send_tg_message(ADMIN_CHAT_ID, alert_text)
+
+def record_cheat_strike(entry):
+    """Logs a cheating strike with a 24h rolling window. If the user hits 5 strikes within
+    24h, blocks them from earning points for the next 24 hours. Returns the current strike count."""
+    now = time.time()
+    strikes = entry.setdefault("cheat_strikes", [])
+    strikes.append(now)
+    strikes[:] = [t for t in strikes if now - t < 86400]
+    if len(strikes) >= 5:
+        entry["blocked_until"] = now + 86400
+    return len(strikes)
 
 def handle_group_points_message(user_id, chat_id, msg):
     """Handles the 'message = point' group-chat earning system: point counting,
@@ -347,21 +350,28 @@ def handle_group_points_message(user_id, chat_id, msg):
             redeem_sessions[user_id] = {"step": "AWAITING_EMAIL"}
             send_tg_message(chat_id, "🎉 Redeem karne ke liye apni PROFITIX website wali registered Gmail reply karke bhejein.", msg_id)
 
-    # Every other normal message earns 1 point — log it for later cheating checks
+    # Every other normal message earns 1 point — log it for later cheating checks.
+    # Skipped entirely if the user is currently blocked (5 cheat strikes within 24h).
     if not handled and stripped:
-        entry["points"] += 1
-        log = entry.setdefault("message_log", [])
-        log.append({"text": stripped[:200], "ts": msg.get("date", 0)})
-        if len(log) > 60:
-            del log[0]
-        save_all()
-
-        spam_reason = check_realtime_spam(entry)
-        if spam_reason:
-            entry["points"] = max(0, entry["points"] - 20)
+        if time.time() < entry.get("blocked_until", 0):
+            pass  # earning suspended for 24h after repeated cheating — stay silent
+        else:
+            entry["points"] += 1
+            log = entry.setdefault("message_log", [])
+            log.append({"text": stripped[:200], "ts": msg.get("date", 0)})
+            if len(log) > 60:
+                del log[0]
             save_all()
-            send_tg_message(chat_id, "⚠️ Aapne cheating ki hai — spam/duplicate messages detect hue, isliye 20 points kaat diye gaye hain. Aage se normal messages bhejein.", msg_id)
-            maybe_alert_admin(user_id, entry, spam_reason)
+
+            spam_reason = check_realtime_spam(entry)
+            if spam_reason:
+                entry["points"] = max(0, entry["points"] - 20)
+                strike_count = record_cheat_strike(entry)
+                save_all()
+                send_tg_message(chat_id, "⚠️ Aapne cheating ki hai — spam/duplicate messages detect hue, isliye 20 points kaat diye gaye hain. Aage se normal messages bhejein.", msg_id)
+                if strike_count >= 5:
+                    send_tg_message(chat_id, "🚫 5 baar cheating pakdi gayi — agle 24 hours ke liye aapke points count nahi honge.", msg_id)
+                maybe_alert_admin(user_id, entry, spam_reason)
 
 # --- Email OTP via Brevo API (HTTPS-based — works on Render, unlike raw SMTP which Render blocks) ---
 BREVO_API_KEY = os.environ.get("BREVO_API_KEY", "")
