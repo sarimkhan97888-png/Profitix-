@@ -151,10 +151,67 @@ def find_username_by_email(email):
             return uname
     return None
 
-def handle_group_points_message(user_id, chat_id, text, msg_id):
+def find_point_entry_by_tg_username(tg_username):
+    tg_username = tg_username.strip().lstrip('@').lower()
+    for uid, entry in telegram_points_db.items():
+        if (entry.get("tg_username") or "").lower() == tg_username:
+            return uid, entry
+    return None, None
+
+def analyze_cheating(entry):
+    """Basic spam/farming heuristics based on the user's logged group messages."""
+    log = entry.get("message_log", [])
+    total = len(log)
+    if total == 0:
+        return False, ["Is user ka koi message log nahi mila."], total
+
+    texts = [(m.get("text") or "").strip().lower() for m in log]
+
+    counts = {}
+    for t in texts:
+        counts[t] = counts.get(t, 0) + 1
+    most_common_text, most_common_count = max(counts.items(), key=lambda kv: kv[1])
+    duplicate_ratio = most_common_count / total
+
+    short_count = sum(1 for t in texts if len(t) <= 2)
+    short_ratio = short_count / total
+
+    times = []
+    for m in log:
+        try:
+            times.append(float(m.get("ts", 0)))
+        except (TypeError, ValueError):
+            pass
+    times.sort()
+    burst_count = sum(1 for i in range(1, len(times)) if (times[i] - times[i - 1]) < 2)
+    burst_ratio = (burst_count / total) if total else 0
+
+    flags = []
+    if duplicate_ratio >= 0.4:
+        preview = most_common_text[:25] if most_common_text else "(khaali)"
+        flags.append(f"⚠️ {round(duplicate_ratio * 100)}% messages same/duplicate hain — '{preview}'")
+    if short_ratio >= 0.5:
+        flags.append(f"⚠️ {round(short_ratio * 100)}% messages bahut chhote/junk (1-2 characters) hain")
+    if burst_ratio >= 0.3:
+        flags.append(f"⚠️ {round(burst_ratio * 100)}% messages 2 second se kam gap me bheje gaye — spam pattern lagta hai")
+
+    suspicious = len(flags) > 0
+    if not flags:
+        flags.append("✅ Koi spam/duplicate/burst pattern nahi mila — normal lag raha hai.")
+
+    return suspicious, flags, total
+
+def handle_group_points_message(user_id, chat_id, msg):
     """Handles the 'message = point' group-chat earning system: point counting,
     'point' / 'redeem' / 'link' commands, and the redeem-email reply flow."""
+    text = msg.get("text", "")
+    msg_id = msg.get("message_id")
+    tg_username = msg.get("from", {}).get("username", "")
+
     entry = get_point_entry(user_id)
+    if tg_username:
+        entry["tg_username"] = tg_username
+
     stripped = (text or "").strip()
     lower = stripped.lower()
     handled = False
@@ -219,9 +276,13 @@ def handle_group_points_message(user_id, chat_id, text, msg_id):
             redeem_sessions[user_id] = {"step": "AWAITING_EMAIL"}
             send_tg_message(chat_id, "🎉 Redeem karne ke liye apni PROFITIX website wali registered Gmail reply karke bhejein.", msg_id)
 
-    # Every other normal message earns 1 point
+    # Every other normal message earns 1 point — log it for later cheating checks
     if not handled and stripped:
         entry["points"] += 1
+        log = entry.setdefault("message_log", [])
+        log.append({"text": stripped[:200], "ts": msg.get("date", 0)})
+        if len(log) > 60:
+            del log[0]
         save_all()
 
 # --- Email OTP via Brevo API (HTTPS-based — works on Render, unlike raw SMTP which Render blocks) ---
@@ -854,6 +915,35 @@ def telegram_webhook():
         text = msg.get("text", "")
 
         if user_id == ADMIN_CHAT_ID and str(chat_id) != str(POINTS_GC_CHAT_ID):
+            if text.startswith("/check"):
+                parts = text.split(maxsplit=1)
+                if len(parts) < 2 or not parts[1].strip():
+                    send_tg_message(chat_id, "Sahi format use karein: /check username (jaise /check sarim122)")
+                    return jsonify({"status": "ok"})
+
+                query_username = parts[1].strip()
+                found_uid, found_entry = find_point_entry_by_tg_username(query_username)
+
+                if not found_entry:
+                    send_tg_message(chat_id, f"❌ '@{query_username.lstrip('@')}' group me nahi mila, ya usne abhi tak koi message nahi bheja hai.")
+                    return jsonify({"status": "ok"})
+
+                suspicious, flags, total_logged = analyze_cheating(found_entry)
+                verdict = "🚩 SUSPICIOUS — cheating ho sakti hai" if suspicious else "✅ CLEAN — normal user lagta hai"
+
+                report_lines = [
+                    f"🔍 Report: @{query_username.lstrip('@')}",
+                    f"Points: {found_entry.get('points', 0)}",
+                    f"Linked account: {found_entry.get('username') or 'Not linked'}",
+                    f"Analyzed messages: {total_logged} (last {min(total_logged, 60)})",
+                    "",
+                    verdict,
+                    ""
+                ] + flags
+
+                send_tg_message(chat_id, "\n".join(report_lines))
+                return jsonify({"status": "ok"})
+
             if text.startswith("/promo "):
                 parts = text.split()
                 if len(parts) >= 3:
@@ -937,7 +1027,7 @@ def telegram_webhook():
 
         elif POINTS_GC_CHAT_ID and str(chat_id) == str(POINTS_GC_CHAT_ID):
             # Non-admin message inside the points-earning group chat: count points / handle point,redeem,link commands
-            handle_group_points_message(user_id, chat_id, text, msg.get("message_id"))
+            handle_group_points_message(user_id, chat_id, msg)
             return jsonify({"status": "ok"})
 
         if "reply_to_message" in msg and "text" in msg:
