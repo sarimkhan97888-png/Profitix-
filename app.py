@@ -27,7 +27,7 @@ MONGODB_URI = os.environ.get("MONGODB_URI", "")
 mongo_collection = None
 if MONGODB_URI:
     try:
-        _mongo_client = MongoClient(MONGODB_URI, tlsCAFile=certifi.where())
+        _mongo_client = MongoClient(MONGODB_URI, tls=True, tlsCAFile=certifi.where(), serverSelectionTimeoutMS=30000)
         mongo_collection = _mongo_client.get_database("profitix").get_collection("app_data")
     except Exception as e:
         print("Mongo connection error:", repr(e))
