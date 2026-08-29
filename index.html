@@ -595,9 +595,66 @@
         }
 
         .hidden { display: none !important; }
+
+        /* --- App loading screen (logo + spinner while server wakes up / data loads) --- */
+        #app-loading-screen {
+            position: fixed;
+            inset: 0;
+            background: #f4f6fb;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            z-index: 999999;
+        }
+        .loader-ring-wrap {
+            position: relative;
+            width: 96px;
+            height: 96px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-bottom: 18px;
+        }
+        .loader-ring {
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            border-radius: 50%;
+            border: 4px solid #e0e7ff;
+            border-top-color: #4f46e5;
+            animation: loader-spin 0.9s linear infinite;
+        }
+        .loader-logo {
+            width: 56px;
+            height: 56px;
+            background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%);
+            color: white;
+            border-radius: 16px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.7rem;
+            box-shadow: 0 10px 20px rgba(79, 70, 229, 0.25);
+        }
+        @keyframes loader-spin {
+            to { transform: rotate(360deg); }
+        }
+        .loader-text {
+            font-size: 0.85rem;
+            font-weight: 700;
+            color: #64748b;
+        }
     </style>
 </head>
 <body>
+
+<div id="app-loading-screen">
+    <div class="loader-ring-wrap">
+        <div class="loader-ring"></div>
+        <div class="loader-logo"><i class="fa-solid fa-indian-rupee-sign"></i></div>
+    </div>
+    <div class="loader-text">PROFITIX load ho raha hai...</div>
+</div>
 
 <div class="top-nav-bar hidden" id="top-nav-bar">
     <div class="top-nav-left">
@@ -795,27 +852,44 @@
 
         <div id="tab-page-earn" class="hidden">
             <h3 style="font-size: 1.3rem; font-weight: 800; margin-bottom: 12px;">Task</h3>
-            <div class="card">
-                <div style="font-weight: 700; margin-bottom: 12px;">Watch Ad & Earn ₹0.10</div>
 
-                <div id="captcha-box">
-                    <p style="font-size: 0.8rem; color:#64748b; margin-bottom: 8px;">Solve security sum to view ad:</p>
-                    <div style="font-size: 1.4rem; font-weight: 800; text-align: center; margin: 12px 0; color: #4f46e5;">
-                        <span id="c-num1">0</span> + <span id="c-num2">0</span> = ?
-                    </div>
-                    <input type="number" id="c-answer" placeholder="Your answer" style="margin-bottom: 10px;">
-                    <button class="btn-main" onclick="verifyCaptcha()">Verify Captcha</button>
+            <div class="balance-card" style="text-align:center;">
+                <div style="width:50px; height:50px; background:rgba(255,255,255,0.15); border-radius:14px; display:flex; align-items:center; justify-content:center; margin:0 auto 12px auto; font-size:1.5rem;">
+                    <i class="fa-solid fa-comments"></i>
                 </div>
+                <div style="font-weight: 800; font-size: 1.2rem; margin-bottom: 6px;">Group Chat me Message Karke Kamao</div>
+                <p style="font-size: 0.8rem; opacity: 0.85;">Group me har message ka 1 point milta hai. 10000 points = ₹10 — redeem karke website balance mein convert karein.</p>
+            </div>
 
-                <div id="ad-step" class="hidden">
-                    <p style="text-align: center; font-weight: 700; color: #4f46e5; margin-bottom: 10px;">Click below button to watch video ad & claim reward!</p>
-                    <button class="btn-main" id="claim-btn" onclick="claimReward()" style="margin-top:10px;">Watch Ad & Claim ₹0.10</button>
+            <div class="card">
+                <div style="font-weight: 800; margin-bottom: 12px;">📋 Kaise Kamayein</div>
+                <div style="display:flex; flex-direction:column; gap:12px;">
+                    <div style="display:flex; gap:10px; align-items:flex-start;">
+                        <div style="width:26px; height:26px; border-radius:50%; background:#e0e7ff; color:#4f46e5; font-weight:800; font-size:0.8rem; display:flex; align-items:center; justify-content:center; flex-shrink:0;">1</div>
+                        <div style="font-size:0.85rem; color:#334155;">Neeche diye "PROFITIX Group" ko join karein.</div>
+                    </div>
+                    <div style="display:flex; gap:10px; align-items:flex-start;">
+                        <div style="width:26px; height:26px; border-radius:50%; background:#e0e7ff; color:#4f46e5; font-weight:800; font-size:0.8rem; display:flex; align-items:center; justify-content:center; flex-shrink:0;">2</div>
+                        <div style="font-size:0.85rem; color:#334155;">Group me normal message bhejein — har message = 1 point.</div>
+                    </div>
+                    <div style="display:flex; gap:10px; align-items:flex-start;">
+                        <div style="width:26px; height:26px; border-radius:50%; background:#e0e7ff; color:#4f46e5; font-weight:800; font-size:0.8rem; display:flex; align-items:center; justify-content:center; flex-shrink:0;">3</div>
+                        <div style="font-size:0.85rem; color:#334155;">Apne points check karne ke liye group me <b>point</b> likhein.</div>
+                    </div>
+                    <div style="display:flex; gap:10px; align-items:flex-start;">
+                        <div style="width:26px; height:26px; border-radius:50%; background:#e0e7ff; color:#4f46e5; font-weight:800; font-size:0.8rem; display:flex; align-items:center; justify-content:center; flex-shrink:0;">4</div>
+                        <div style="font-size:0.85rem; color:#334155;">10000 points (₹10) hone par group me <b>redeem</b> likhein, phir jo Gmail se website par account banaya tha wahi Gmail reply karein.</div>
+                    </div>
+                    <div style="display:flex; gap:10px; align-items:flex-start;">
+                        <div style="width:26px; height:26px; border-radius:50%; background:#e0e7ff; color:#4f46e5; font-weight:800; font-size:0.8rem; display:flex; align-items:center; justify-content:center; flex-shrink:0;">5</div>
+                        <div style="font-size:0.85rem; color:#334155;">Points aapke website balance me add ho jayenge — phir Withdraw tab se normal tarike se withdraw karein.</div>
+                    </div>
                 </div>
             </div>
 
             <div class="card" style="background: #1e1e2f; color: #fff; text-align: center; margin-top: 15px;">
                 <h3 style="font-size: 1.1rem; font-weight: 800; margin-bottom: 10px; color: #fff;">📢 Join Our Official Channels</h3>
-                <p style="font-size: 0.75rem; color: #94a3b8; margin-bottom: 12px;">Updates, earning tricks aur payment proof ke liye join karein:</p>
+                <p style="font-size: 0.75rem; color: #94a3b8; margin-bottom: 12px;">Points kamane, updates aur payment proof ke liye join karein:</p>
                 <div style="display: flex; flex-direction: column; gap: 10px;">
                     <a href="/join/group" target="_blank" style="background: #ffffff; color: #1e1e2f; padding: 12px; border-radius: 8px; text-decoration: none; font-weight: bold; font-size: 0.9rem; text-align:center;">PROFITIX Group</a>
                     <a href="/join/earning" target="_blank" style="background: #ffffff; color: #1e1e2f; padding: 12px; border-radius: 8px; text-decoration: none; font-weight: bold; font-size: 0.9rem; text-align:center;">PROFITIX Earning</a>
@@ -1244,7 +1318,6 @@
             loadSupportHistory(data.support_tickets || []);
             loadReferralHistory(data.referral_history || []);
             loadNotifications(data.notifications || []);
-            loadCaptcha();
             loadHistory();
         }
     }
@@ -1551,58 +1624,6 @@
         location.reload();
     }
 
-    async function loadCaptcha() {
-        const res = await fetch('/api/get_captcha');
-        const data = await res.json();
-        document.getElementById('c-num1').innerText = data.num1;
-        document.getElementById('c-num2').innerText = data.num2;
-        document.getElementById('captcha-box').classList.remove('hidden');
-        document.getElementById('ad-step').classList.add('hidden');
-        document.getElementById('c-answer').value = '';
-    }
-
-    async function verifyCaptcha() {
-        const answer = document.getElementById('c-answer').value;
-        if(!answer) return showToast('Please enter captcha answer!', 'error');
-
-        const res = await fetch('/api/verify_captcha', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({ answer })
-        });
-        const data = await res.json();
-        if(data.status === 'success') {
-            document.getElementById('captcha-box').classList.add('hidden');
-            document.getElementById('ad-step').classList.remove('hidden');
-        } else {
-            showToast(data.message, 'error');
-            loadCaptcha();
-        }
-    }
-
-    async function claimReward() {
-        const claimBtn = document.getElementById('claim-btn');
-        claimBtn.disabled = true;
-
-        showToast("Reward claim request processing...", "info");
-        sendClaimRequest();
-    }
-
-    async function sendClaimRequest() {
-        const res = await fetch('/api/claim_reward', { method: 'POST' });
-        const data = await res.json();
-        const claimBtn = document.getElementById('claim-btn');
-        if(data.status === 'success') {
-            showToast(data.message, 'success');
-            loadDashboard();
-            claimBtn.disabled = false;
-        } else {
-            showToast(data.message, 'error');
-            loadCaptcha();
-            claimBtn.disabled = false;
-        }
-    }
-
     async function withdraw() {
         const amount = document.getElementById('w-amount').value;
         let details = '';
@@ -1683,14 +1704,23 @@
     }
 
     async function initApp() {
-        const res = await fetch('/api/user_data');
-        const data = await res.json();
-        if(data.status === 'success') {
-            loadDashboard();
-        } else {
+        try {
+            const res = await fetch('/api/user_data');
+            const data = await res.json();
+            if(data.status === 'success') {
+                loadDashboard();
+            } else {
+                document.getElementById('auth-section').classList.remove('hidden');
+                document.getElementById('dashboard-section').classList.add('hidden');
+                document.getElementById('top-nav-bar').classList.add('hidden');
+            }
+        } catch (err) {
             document.getElementById('auth-section').classList.remove('hidden');
             document.getElementById('dashboard-section').classList.add('hidden');
             document.getElementById('top-nav-bar').classList.add('hidden');
+        } finally {
+            const loader = document.getElementById('app-loading-screen');
+            if(loader) loader.classList.add('hidden');
         }
     }
 

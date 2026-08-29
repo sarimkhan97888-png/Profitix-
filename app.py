@@ -31,7 +31,7 @@ if MONGODB_URI:
     except Exception as e:
         print("Mongo connection error:", repr(e))
 
-DEFAULT_DATA = {"users": {}, "withdrawals": [], "support_tickets": [], "notifications": [], "promo_codes": {}}
+DEFAULT_DATA = {"users": {}, "withdrawals": [], "support_tickets": [], "notifications": [], "promo_codes": {}, "telegram_points": {}}
 
 def load_data():
     if mongo_collection is not None:
@@ -80,8 +80,21 @@ withdrawals_db = db.get("withdrawals", [])
 support_tickets_db = db.get("support_tickets", [])
 notifications_db = db.get("notifications", [])
 promo_codes_db = db.get("promo_codes", {})
+telegram_points_db = db.get("telegram_points", {})
 otp_db = {}
 broadcast_sessions = {}
+redeem_sessions = {}
+
+def save_all():
+    """Persist every in-memory collection together so nothing gets dropped on save."""
+    save_data({
+        "users": users_db,
+        "withdrawals": withdrawals_db,
+        "support_tickets": support_tickets_db,
+        "notifications": notifications_db,
+        "promo_codes": promo_codes_db,
+        "telegram_points": telegram_points_db
+    })
 
 # --- Migrate old notifications (no id/likes/comments) so like & comment features work on old data ---
 _notif_migrated = False
@@ -96,7 +109,7 @@ for _i, _n in enumerate(notifications_db):
         _n["comments"] = []
         _notif_migrated = True
 if _notif_migrated:
-    save_data({"users": users_db, "withdrawals": withdrawals_db, "support_tickets": support_tickets_db, "notifications": notifications_db, "promo_codes": promo_codes_db})
+    save_all()
 
 def next_notif_id():
     if not notifications_db:
@@ -107,6 +120,109 @@ TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 ADMIN_CHAT_ID = os.environ.get("ADMIN_CHAT_ID", "")
 ADMIN_SUPPORT_GC = os.environ.get("ADMIN_SUPPORT_GC", "")
 ADMIN_PAYMENT_CHANNEL = os.environ.get("ADMIN_PAYMENT_CHANNEL", "@PROFITIX77")
+
+# --- Group-chat "message = point" earning system ---
+# Set POINTS_GC_CHAT_ID to the Telegram chat_id of the group where messages should count as points
+# (this is usually a negative number for groups, e.g. -1001234567890).
+POINTS_GC_CHAT_ID = os.environ.get("POINTS_GC_CHAT_ID", "")
+POINT_VALUE = float(os.environ.get("POINT_VALUE", "0.001"))         # ₹ credited per point on redeem (10000 pts = ₹10)
+POINTS_REDEEM_THRESHOLD = int(os.environ.get("POINTS_REDEEM_THRESHOLD", "10000"))
+
+def get_point_entry(tg_user_id):
+    if tg_user_id not in telegram_points_db:
+        telegram_points_db[tg_user_id] = {"points": 0, "email": None, "username": None}
+    return telegram_points_db[tg_user_id]
+
+def send_tg_message(chat_id, text, reply_to=None):
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    payload = {"chat_id": chat_id, "text": text}
+    if reply_to:
+        payload["reply_to_message_id"] = reply_to
+    try:
+        requests.post(url, json=payload, timeout=10)
+    except Exception as e:
+        print("Group message send error:", e)
+
+def find_username_by_email(email):
+    email = email.strip().lower()
+    for uname, udata in users_db.items():
+        if udata.get("email", "").strip().lower() == email:
+            return uname
+    return None
+
+def handle_group_points_message(user_id, chat_id, text, msg_id):
+    """Handles the 'message = point' group-chat earning system: point counting,
+    'point' / 'redeem' / 'link' commands, and the redeem-email reply flow."""
+    entry = get_point_entry(user_id)
+    stripped = (text or "").strip()
+    lower = stripped.lower()
+    handled = False
+
+    # Step 2 of redeem flow: user is replying with their Gmail
+    if user_id in redeem_sessions and redeem_sessions[user_id].get("step") == "AWAITING_EMAIL":
+        handled = True
+        email = stripped.lower()
+        if "@" in email and "." in email:
+            matched_username = find_username_by_email(email)
+            if matched_username:
+                pts = entry["points"]
+                if pts >= POINTS_REDEEM_THRESHOLD:
+                    credit = round(pts * POINT_VALUE, 2)
+                    users_db[matched_username]["balance"] += credit
+                    entry["points"] = 0
+                    entry["email"] = email
+                    entry["username"] = matched_username
+                    save_all()
+                    send_tg_message(chat_id, f"✅ Redeem successful! {pts} points = ₹{credit} aapke PROFITIX account ({matched_username}) me add ho gaya hai. Website ke Withdraw tab se ab withdraw kar sakte ho!", msg_id)
+                else:
+                    send_tg_message(chat_id, f"⚠️ Aapke paas sirf {pts} points hain. Redeem ke liye kam se kam {POINTS_REDEEM_THRESHOLD} points chahiye.", msg_id)
+            else:
+                send_tg_message(chat_id, "❌ Ye Gmail kisi PROFITIX website account se match nahi hui. Pehle website par register/login karke sahi registered Gmail reply karein.", msg_id)
+        else:
+            send_tg_message(chat_id, "⚠️ Ye valid Gmail nahi lagi. Kripya apni registered Gmail address reply karein.", msg_id)
+        del redeem_sessions[user_id]
+
+    if not handled and lower in ("/point", "point", "/points", "points"):
+        handled = True
+        pts = entry["points"]
+        linked = f" (linked: {entry['username']})" if entry.get("username") else ""
+        send_tg_message(chat_id, f"📊 Aapke abhi {pts} points hain{linked}. {POINTS_REDEEM_THRESHOLD} points par redeem kar sakte ho — 'redeem' likhein.", msg_id)
+
+    elif not handled and lower.startswith("/link"):
+        handled = True
+        parts = stripped.split(maxsplit=1)
+        email = parts[1].strip().lower() if len(parts) > 1 else ""
+        if "@" in email and "." in email:
+            matched_username = find_username_by_email(email)
+            if matched_username:
+                entry["email"] = email
+                entry["username"] = matched_username
+                save_all()
+                send_tg_message(chat_id, f"✅ Aapka account ({matched_username}) is Telegram se link ho gaya! Points ginte rahenge.", msg_id)
+            else:
+                send_tg_message(chat_id, "❌ Ye Gmail kisi PROFITIX website account se match nahi hui.", msg_id)
+        else:
+            send_tg_message(chat_id, "Sahi format: /link yourgmail@gmail.com", msg_id)
+
+    elif not handled and lower in ("/redeem", "redeem"):
+        handled = True
+        pts = entry["points"]
+        if pts < POINTS_REDEEM_THRESHOLD:
+            send_tg_message(chat_id, f"⚠️ Redeem ke liye kam se kam {POINTS_REDEEM_THRESHOLD} points chahiye. Aapke paas abhi {pts} points hain.", msg_id)
+        elif entry.get("username"):
+            credit = round(pts * POINT_VALUE, 2)
+            users_db[entry["username"]]["balance"] += credit
+            entry["points"] = 0
+            save_all()
+            send_tg_message(chat_id, f"✅ Redeem successful! {pts} points = ₹{credit} aapke account ({entry['username']}) me add ho gaya. Website se withdraw kar sakte ho!", msg_id)
+        else:
+            redeem_sessions[user_id] = {"step": "AWAITING_EMAIL"}
+            send_tg_message(chat_id, "🎉 Redeem karne ke liye apni PROFITIX website wali registered Gmail reply karke bhejein.", msg_id)
+
+    # Every other normal message earns 1 point
+    if not handled and stripped:
+        entry["points"] += 1
+        save_all()
 
 # --- Email OTP via Brevo API (HTTPS-based — works on Render, unlike raw SMTP which Render blocks) ---
 BREVO_API_KEY = os.environ.get("BREVO_API_KEY", "")
@@ -260,7 +376,7 @@ def register():
         if username not in users_db[referred_by]['referrals']:
             users_db[referred_by]['referrals'].append(username)
 
-    save_data({"users": users_db, "withdrawals": withdrawals_db, "support_tickets": support_tickets_db, "notifications": notifications_db, "promo_codes": promo_codes_db})
+    save_all()
 
     session.permanent = True
     session['user'] = username
@@ -340,7 +456,7 @@ def forgot_password_reset():
 
     otp_db.pop(email, None)
     users_db[matched_username]['password'] = new_password
-    save_data({"users": users_db, "withdrawals": withdrawals_db, "support_tickets": support_tickets_db, "notifications": notifications_db, "promo_codes": promo_codes_db})
+    save_all()
 
     return jsonify({"status": "success", "message": "Password successfully reset ho gaya! Ab login karein."})
 
@@ -368,7 +484,7 @@ def user_data():
         user["used_promos"] = []
     if "referral_code" not in user:
         user["referral_code"] = generate_ref_code()
-        save_data({"users": users_db, "withdrawals": withdrawals_db, "support_tickets": support_tickets_db, "notifications": notifications_db, "promo_codes": promo_codes_db})
+        save_all()
 
     referral_details = []
     for ref_user in user['referrals']:
@@ -472,7 +588,7 @@ def claim_checkin():
     user['checkin_day'] = current_day
     user['last_checkin_date'] = today_str
 
-    save_data({"users": users_db, "withdrawals": withdrawals_db, "support_tickets": support_tickets_db, "notifications": notifications_db, "promo_codes": promo_codes_db})
+    save_all()
     return jsonify({"status": "success", "message": f"Day {current_day} check-in successful! ₹{reward} added.", "reward": reward, "day": current_day})
 
 @app.route('/api/apply_promo', methods=['POST'])
@@ -510,47 +626,8 @@ def apply_promo():
     user["used_promos"].append(code)
     promo["used_by"].append(username)
 
-    save_data({"users": users_db, "withdrawals": withdrawals_db, "support_tickets": support_tickets_db, "notifications": notifications_db, "promo_codes": promo_codes_db})
+    save_all()
     return jsonify({"status": "success", "message": f"Promo code applied successfully! ₹{amount} added."})
-
-@app.route('/api/get_captcha', methods=['GET'])
-def get_captcha():
-    num1 = random.randint(1, 9)
-    num2 = random.randint(1, 9)
-    session['captcha_ans'] = num1 + num2
-    return jsonify({"num1": num1, "num2": num2})
-
-@app.route('/api/verify_captcha', methods=['POST'])
-def verify_captcha():
-    data = request.json
-    try:
-        ans = int(str(data.get('answer', '')).strip())
-    except ValueError:
-        return jsonify({"status": "error", "message": "Invalid input"})
-
-    if 'captcha_ans' not in session:
-        return jsonify({"status": "error", "message": "Captcha expired!"})
-
-    if ans == session.get('captcha_ans'):
-        session['captcha_verified'] = True
-        return jsonify({"status": "success"})
-
-    return jsonify({"status": "error", "message": "Wrong captcha answer"})
-
-@app.route('/api/claim_reward', methods=['POST'])
-def claim_reward():
-    username = session.get('user')
-    if not username:
-        return jsonify({"status": "error", "message": "Not logged in"})
-
-    if not session.get('captcha_verified'):
-        return jsonify({"status": "error", "message": "Please solve captcha first"})
-
-    users_db[username]['balance'] += 0.10
-    save_data({"users": users_db, "withdrawals": withdrawals_db, "support_tickets": support_tickets_db, "notifications": notifications_db, "promo_codes": promo_codes_db})
-    session['captcha_verified'] = False
-
-    return jsonify({"status": "success", "message": "₹0.10 added to balance!"})
 
 @app.route('/api/withdraw', methods=['POST'])
 def withdraw():
@@ -585,7 +662,7 @@ def withdraw():
         "status": "Pending"
     }
     withdrawals_db.append(tx_data)
-    save_data({"users": users_db, "withdrawals": withdrawals_db, "support_tickets": support_tickets_db, "notifications": notifications_db, "promo_codes": promo_codes_db})
+    save_all()
 
     try:
         msg = f"🔔 *New Withdrawal Request!*\n\n" \
@@ -666,7 +743,7 @@ def support_ticket():
     if username in users_db:
         users_db[username]["support_tickets"] = [t for t in support_tickets_db if t.get('username') == username]
 
-    save_data({"users": users_db, "withdrawals": withdrawals_db, "support_tickets": support_tickets_db, "notifications": notifications_db, "promo_codes": promo_codes_db})
+    save_all()
 
     try:
         msg = f"🛠 *Support Ticket #{ticket_id}*\n\n" \
@@ -685,7 +762,7 @@ def support_ticket():
         if resp.get("ok"):
             sent_msg_id = resp["result"]["message_id"]
             ticket_info["telegram_msg_id"] = sent_msg_id
-            save_data({"users": users_db, "withdrawals": withdrawals_db, "support_tickets": support_tickets_db, "notifications": notifications_db, "promo_codes": promo_codes_db})
+            save_all()
     except Exception as e:
         print("Telegram Support Error:", e)
 
@@ -706,7 +783,7 @@ def add_notification(title, message, image=""):
     if len(notifications_db) > 10:
         notifications_db.pop(0)
 
-    save_data({"users": users_db, "withdrawals": withdrawals_db, "support_tickets": support_tickets_db, "notifications": notifications_db, "promo_codes": promo_codes_db})
+    save_all()
 
 @app.route('/api/notification/like', methods=['POST'])
 def notification_like():
@@ -729,7 +806,7 @@ def notification_like():
             else:
                 likes.append(username)
                 liked = True
-            save_data({"users": users_db, "withdrawals": withdrawals_db, "support_tickets": support_tickets_db, "notifications": notifications_db, "promo_codes": promo_codes_db})
+            save_all()
             return jsonify({"status": "success", "liked": liked, "like_count": len(likes)})
 
     return jsonify({"status": "error", "message": "Notification not found"})
@@ -761,7 +838,7 @@ def notification_comment():
             })
             if len(comments) > 100:
                 comments.pop(0)
-            save_data({"users": users_db, "withdrawals": withdrawals_db, "support_tickets": support_tickets_db, "notifications": notifications_db, "promo_codes": promo_codes_db})
+            save_all()
             return jsonify({"status": "success", "comments": comments})
 
     return jsonify({"status": "error", "message": "Notification not found"})
@@ -790,7 +867,7 @@ def telegram_webhook():
                             "max_users": p_max,
                             "used_by": []
                         }
-                        save_data({"users": users_db, "withdrawals": withdrawals_db, "support_tickets": support_tickets_db, "notifications": notifications_db, "promo_codes": promo_codes_db})
+                        save_all()
 
                         limit_text = f"{p_max} users" if p_max else "Unlimited users"
                         url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
@@ -858,6 +935,11 @@ def telegram_webhook():
                     requests.post(url, json={"chat_id": chat_id, "text": "🎉 Photo ke sath broadcast notification successfully website par bhej di gayi hai!"})
                     return jsonify({"status": "ok"})
 
+        elif POINTS_GC_CHAT_ID and str(chat_id) == str(POINTS_GC_CHAT_ID):
+            # Non-admin message inside the points-earning group chat: count points / handle point,redeem,link commands
+            handle_group_points_message(user_id, chat_id, text, msg.get("message_id"))
+            return jsonify({"status": "ok"})
+
         if "reply_to_message" in msg and "text" in msg:
             replied_msg_id = msg["reply_to_message"]["message_id"]
             admin_reply_text = msg["text"]
@@ -880,7 +962,7 @@ def telegram_webhook():
                             ut["admin_reply"] = admin_reply_text
                             ut["status"] = "Resolved"
 
-                save_data({"users": users_db, "withdrawals": withdrawals_db, "support_tickets": support_tickets_db, "notifications": notifications_db, "promo_codes": promo_codes_db})
+                save_all()
 
                 try:
                     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
@@ -972,7 +1054,7 @@ def telegram_webhook():
                     break
 
             if found:
-                save_data({"users": users_db, "withdrawals": withdrawals_db, "support_tickets": support_tickets_db, "notifications": notifications_db, "promo_codes": promo_codes_db})
+                save_all()
                 edit_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/editMessageText"
                 original_text = callback["message"].get("text", "Withdrawal Request")
                 requests.post(edit_url, json={
