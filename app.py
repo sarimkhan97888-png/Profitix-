@@ -853,7 +853,7 @@ def telegram_webhook():
         user_id = str(msg["from"]["id"])
         text = msg.get("text", "")
 
-        if user_id == ADMIN_CHAT_ID:
+        if user_id == ADMIN_CHAT_ID and str(chat_id) != str(POINTS_GC_CHAT_ID):
             if text.startswith("/promo "):
                 parts = text.split()
                 if len(parts) >= 3:
