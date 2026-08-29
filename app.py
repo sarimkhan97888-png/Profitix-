@@ -186,8 +186,7 @@ def handle_group_points_message(user_id, chat_id, text, msg_id):
     if not handled and lower in ("/point", "point", "/points", "points"):
         handled = True
         pts = entry["points"]
-        linked = f" (linked: {entry['username']})" if entry.get("username") else ""
-        send_tg_message(chat_id, f"📊 Aapke abhi {pts} points hain{linked}. {POINTS_REDEEM_THRESHOLD} points par redeem kar sakte ho — 'redeem' likhein.", msg_id)
+        send_tg_message(chat_id, f"Point- {pts}", msg_id)
 
     elif not handled and lower.startswith("/link"):
         handled = True
