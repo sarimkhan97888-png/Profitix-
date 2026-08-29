@@ -1610,9 +1610,10 @@
 
     function shareRefLink() {
         const code = document.getElementById('u-ref-code').innerText;
-        const text = `Join Profitix and earn real money! Use my code: ${code}`;
+        const link = `${window.location.origin}/?ref=${encodeURIComponent(code)}`;
+        const text = `Join Profitix and earn real money! Use my code: ${code}\n${link}`;
         if(navigator.share) {
-            navigator.share({ title: 'Profitix', text: text, url: window.location.href });
+            navigator.share({ title: 'Profitix', text: text, url: link });
         } else {
             navigator.clipboard.writeText(text);
             showToast('Share link copied!', 'info');
@@ -1723,6 +1724,19 @@
             if(loader) loader.classList.add('hidden');
         }
     }
+
+    // If someone opened the site via a referral link (?ref=CODE), auto-fill the code
+    // and jump straight to the Sign Up tab so they don't have to type it manually.
+    function applyRefCodeFromUrl() {
+        const params = new URLSearchParams(window.location.search);
+        const refCode = params.get('ref');
+        if(refCode) {
+            switchAuthTab('signup');
+            const refInput = document.getElementById('ref_code');
+            if(refInput) refInput.value = refCode;
+        }
+    }
+    applyRefCodeFromUrl();
 
     initApp();
 
