@@ -33,7 +33,7 @@ if MONGODB_URI:
     except Exception as e:
         print("Mongo connection error:", repr(e))
 
-DEFAULT_DATA = {"users": {}, "withdrawals": [], "support_tickets": [], "notifications": [], "promo_codes": {}, "telegram_points": {}}
+DEFAULT_DATA = {"users": {}, "withdrawals": [], "support_tickets": [], "notifications": [], "promo_codes": {}, "telegram_points": {}, "saved_ad": {}}
 
 def load_data():
     if mongo_collection is not None:
@@ -83,6 +83,7 @@ support_tickets_db = db.get("support_tickets", [])
 notifications_db = db.get("notifications", [])
 promo_codes_db = db.get("promo_codes", {})
 telegram_points_db = db.get("telegram_points", {})
+saved_ad_db = db.get("saved_ad", {})  # {"file_id": ..., "caption": ...} — set once via /ads, reused every time
 otp_db = {}
 broadcast_sessions = {}
 redeem_sessions = {}
@@ -97,7 +98,8 @@ def save_all():
         "support_tickets": support_tickets_db,
         "notifications": notifications_db,
         "promo_codes": promo_codes_db,
-        "telegram_points": telegram_points_db
+        "telegram_points": telegram_points_db,
+        "saved_ad": saved_ad_db
     })
 
 # --- Migrate old notifications (no id/likes/comments) so like & comment features work on old data ---
@@ -1187,14 +1189,26 @@ def telegram_webhook():
                     "━━━━━━━━━━━━━━━\n"
                     "🚀 Koi kaam ka jhanjhat nahi — bas chat karo aur kamao!"
                 )
+                saved_ad_db["file_id"] = file_id
+                saved_ad_db["caption"] = ad_caption
+                save_all()
                 send_tg_photo(POINTS_GC_CHAT_ID, file_id, ad_caption)
-                send_tg_message(chat_id, "✅ Ad photo ke saath group me bhej diya!")
+                send_tg_message(chat_id, "✅ Ad save ho gaya aur group me bhej diya! Ab se jab bhi /ads likhoge, yehi photo+message dobara chala jayega.")
                 del ad_sessions[user_id]
                 return jsonify({"status": "ok"})
 
             if text.startswith("/ads"):
-                ad_sessions[user_id] = {"step": "WAITING_PHOTO"}
-                send_tg_message(chat_id, "📸 Ab wahi photo bhejiye jo ad ke saath group me post karni hai.")
+                if text.strip().lower() == "/ads new":
+                    ad_sessions[user_id] = {"step": "WAITING_PHOTO"}
+                    send_tg_message(chat_id, "📸 Naya ad set karne ke liye photo bhejiye.")
+                    return jsonify({"status": "ok"})
+
+                if saved_ad_db.get("file_id"):
+                    send_tg_photo(POINTS_GC_CHAT_ID, saved_ad_db["file_id"], saved_ad_db.get("caption", ""))
+                    send_tg_message(chat_id, "✅ Saved ad group me bhej diya! (Naya photo set karna ho to '/ads new' likhein)")
+                else:
+                    ad_sessions[user_id] = {"step": "WAITING_PHOTO"}
+                    send_tg_message(chat_id, "📸 Ab wahi photo bhejiye jo ad ke saath group me post karni hai.")
                 return jsonify({"status": "ok"})
 
             if text.startswith("/refreshnames"):
