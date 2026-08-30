@@ -162,8 +162,8 @@ def find_point_entry_by_website_username(query):
     return None, None
 
 def analyze_cheating(entry):
-    """Spam/farming heuristics based on the user's logged group messages. Tuned strict —
-    even small patterns of repeated/junk/fast messages get flagged."""
+    """Spam/farming heuristics based on the user's logged group messages (kept since their
+    last redeem). Tuned very strict — even one small suspicious pattern gets flagged."""
     log = entry.get("message_log", [])
     total = len(log)
     if total == 0:
@@ -182,6 +182,8 @@ def analyze_cheating(entry):
 
     unique_ratio = len(set(texts)) / total
 
+    avg_len = sum(len(t) for t in texts) / total
+
     times = []
     for m in log:
         try:
@@ -191,6 +193,7 @@ def analyze_cheating(entry):
     times.sort()
     burst_count = sum(1 for i in range(1, len(times)) if (times[i] - times[i - 1]) < 3)
     burst_ratio = (burst_count / total) if total else 0
+    fastest_gap = min((times[i] - times[i - 1] for i in range(1, len(times))), default=None)
 
     # Longest run of consecutive identical messages (in send order)
     max_streak = 1
@@ -202,24 +205,72 @@ def analyze_cheating(entry):
         else:
             cur_streak = 1
 
+    # Near-duplicate check: same first 4 words repeated across messages
+    prefix_counts = {}
+    for t in texts:
+        words = t.split()
+        if len(words) >= 2:
+            prefix = " ".join(words[:4])
+            prefix_counts[prefix] = prefix_counts.get(prefix, 0) + 1
+    max_prefix_repeat = max(prefix_counts.values(), default=0)
+
     flags = []
-    if duplicate_ratio >= 0.2:
+    if duplicate_ratio >= 0.1 and most_common_count >= 2:
         preview = most_common_text[:25] if most_common_text else "(khaali)"
-        flags.append(f"⚠️ {round(duplicate_ratio * 100)}% messages same/duplicate hain — '{preview}'")
-    if max_streak >= 3:
+        flags.append(f"⚠️ {round(duplicate_ratio * 100)}% ({most_common_count}) messages same/duplicate hain — '{preview}'")
+    if max_streak >= 2:
         flags.append(f"⚠️ Lagatar {max_streak} baar wahi same message bheja — repeat-spam pattern")
-    if short_ratio >= 0.25:
+    if short_ratio >= 0.1:
         flags.append(f"⚠️ {round(short_ratio * 100)}% messages bahut chhote/junk (1-2 characters) hain")
-    if burst_ratio >= 0.15:
+    if burst_ratio >= 0.08:
         flags.append(f"⚠️ {round(burst_ratio * 100)}% messages 3 second se kam gap me bheje gaye — spam pattern lagta hai")
-    if total >= 10 and unique_ratio <= 0.4:
-        flags.append(f"⚠️ Sirf {round(unique_ratio * 100)}% messages unique hain — bahut kam variety, farming jaisa lagta hai")
+    if fastest_gap is not None and fastest_gap < 1.5:
+        flags.append(f"⚠️ Do messages sirf {round(fastest_gap, 1)} second ke gap me bheje gaye — bahut fast, insaan jaisa nahi lagta")
+    if total >= 5 and unique_ratio <= 0.6:
+        flags.append(f"⚠️ Sirf {round(unique_ratio * 100)}% messages unique hain — kam variety, farming jaisa lagta hai")
+    if avg_len <= 4:
+        flags.append(f"⚠️ Average message length sirf {round(avg_len, 1)} characters hai — bahut chhote/khokhle messages")
+    if max_prefix_repeat >= 2:
+        flags.append(f"⚠️ Kai messages ek jaise shabdon se shuru hote hain ({max_prefix_repeat} baar) — template/copy-paste jaisa lagta hai")
 
     suspicious = len(flags) > 0
     if not flags:
         flags.append("✅ Koi spam/duplicate/burst pattern nahi mila — normal lag raha hai.")
 
     return suspicious, flags, total
+
+def handle_admin_reply_command(chat_id, text, reply_from):
+    """Lets the admin reply to a user's message in the points group with /block or /unblock
+    to act on that exact user directly — no need to type their username.
+    (/check stays DM-only, handled separately.)"""
+    target_uid = str(reply_from.get("id"))
+    target_tgname = reply_from.get("username", "")
+    entry = get_point_entry(target_uid)
+    if target_tgname:
+        entry["tg_username"] = target_tgname
+
+    parts = text.strip().split()
+    cmd = parts[0].lower()
+
+    if cmd == "/block":
+        hours = 24
+        if len(parts) >= 2:
+            try:
+                hours = float(parts[1])
+            except ValueError:
+                hours = 24
+        entry["blocked_until"] = time.time() + hours * 3600
+        save_all()
+        send_tg_message(chat_id, f"🚫 @{target_tgname or target_uid} ko {hours} hours ke liye block kar diya — is dauran points count nahi honge.")
+        return
+
+    elif cmd == "/unblock":
+        entry["blocked_until"] = 0
+        save_all()
+        send_tg_message(chat_id, f"✅ @{target_tgname or target_uid} ka block hata diya — points ab count honge.")
+        return
+
+    save_all()
 
 def check_realtime_spam(entry):
     """Runs after every earned point on the last few messages, for immediate spam detection.
@@ -302,6 +353,7 @@ def handle_group_points_message(user_id, chat_id, msg):
                     credit = round(pts * POINT_VALUE, 2)
                     users_db[matched_username]["balance"] += credit
                     entry["points"] = 0
+                    entry["message_log"] = []
                     entry["email"] = email
                     entry["username"] = matched_username
                     save_all()
@@ -344,6 +396,7 @@ def handle_group_points_message(user_id, chat_id, msg):
             credit = round(pts * POINT_VALUE, 2)
             users_db[entry["username"]]["balance"] += credit
             entry["points"] = 0
+            entry["message_log"] = []
             save_all()
             send_tg_message(chat_id, f"✅ Redeem successful! {pts} points = ₹{credit} aapke account ({entry['username']}) me add ho gaya. Website se withdraw kar sakte ho!", msg_id)
         else:
@@ -351,6 +404,8 @@ def handle_group_points_message(user_id, chat_id, msg):
             send_tg_message(chat_id, "🎉 Redeem karne ke liye apni PROFITIX website wali registered Gmail reply karke bhejein.", msg_id)
 
     # Every other normal message earns 1 point — log it for later cheating checks.
+    # This log stays until the user redeems (then it resets), so /check only ever looks
+    # at messages since their last redeem.
     # Skipped entirely if the user is currently blocked (5 cheat strikes within 24h).
     if not handled and stripped:
         if time.time() < entry.get("blocked_until", 0):
@@ -359,13 +414,14 @@ def handle_group_points_message(user_id, chat_id, msg):
             entry["points"] += 1
             log = entry.setdefault("message_log", [])
             log.append({"text": stripped[:200], "ts": msg.get("date", 0)})
-            if len(log) > 60:
-                del log[0]
+            # No cap here on purpose — every message stays logged until the user redeems,
+            # so /check always sees the complete history since their last redeem.
             save_all()
 
             spam_reason = check_realtime_spam(entry)
             if spam_reason:
                 entry["points"] = max(0, entry["points"] - 20)
+                del log[-20:]  # remove the last 20 logged messages along with the 20 cut points
                 strike_count = record_cheat_strike(entry)
                 save_all()
                 send_tg_message(chat_id, "⚠️ Aapne cheating ki hai — spam/duplicate messages detect hue, isliye 20 points kaat diye gaye hain. Aage se normal messages bhejein.", msg_id)
@@ -1002,6 +1058,15 @@ def telegram_webhook():
         user_id = str(msg["from"]["id"])
         text = msg.get("text", "")
 
+        # Admin can reply to a user's message (in the points group) with /block or
+        # /unblock to act on that exact user directly — takes priority over everything else.
+        if user_id == ADMIN_CHAT_ID and "reply_to_message" in msg and text.strip():
+            first_word = text.strip().split()[0].lower()
+            if first_word in ("/block", "/unblock"):
+                reply_from = msg["reply_to_message"].get("from", {})
+                handle_admin_reply_command(chat_id, text, reply_from)
+                return jsonify({"status": "ok"})
+
         if user_id == ADMIN_CHAT_ID and str(chat_id) != str(POINTS_GC_CHAT_ID):
             if text.startswith("/check"):
                 parts = text.split(maxsplit=1)
@@ -1019,17 +1084,64 @@ def telegram_webhook():
                 suspicious, flags, total_logged = analyze_cheating(found_entry)
                 verdict = "🚩 SUSPICIOUS — cheating ho sakti hai" if suspicious else "✅ CLEAN — normal user lagta hai"
 
+                blocked_note = ""
+                if time.time() < found_entry.get("blocked_until", 0):
+                    remaining_min = round((found_entry["blocked_until"] - time.time()) / 60)
+                    blocked_note = f"\n🚫 Currently BLOCKED (~{remaining_min} min baaki)"
+
                 report_lines = [
                     f"🔍 Report: {query_username}",
                     f"Points: {found_entry.get('points', 0)}",
                     f"Telegram: @{found_entry.get('tg_username') or 'unknown'}",
-                    f"Analyzed messages: {total_logged} (last {min(total_logged, 60)})",
+                    f"Analyzed messages: {total_logged} (last redeem ke baad se sab)",
+                    blocked_note,
                     "",
                     verdict,
                     ""
                 ] + flags
 
                 send_tg_message(chat_id, "\n".join(report_lines))
+                return jsonify({"status": "ok"})
+
+            if text.startswith("/block"):
+                parts = text.split(maxsplit=2)
+                if len(parts) < 2 or not parts[1].strip():
+                    send_tg_message(chat_id, "Sahi format use karein: /block website_username [hours] (jaise /block sarim01 24 — hours optional, default 24)")
+                    return jsonify({"status": "ok"})
+
+                query_username = parts[1].strip()
+                hours = 24
+                if len(parts) >= 3:
+                    try:
+                        hours = float(parts[2].strip())
+                    except ValueError:
+                        hours = 24
+
+                found_uid, found_entry = find_point_entry_by_website_username(query_username)
+                if not found_entry:
+                    send_tg_message(chat_id, f"❌ Website username '{query_username}' se koi Telegram account link nahi mila.")
+                    return jsonify({"status": "ok"})
+
+                found_entry["blocked_until"] = time.time() + (hours * 3600)
+                save_all()
+                send_tg_message(chat_id, f"🚫 {query_username} ko {hours} hours ke liye block kar diya — is dauran points count nahi honge.")
+                return jsonify({"status": "ok"})
+
+            if text.startswith("/unblock"):
+                parts = text.split(maxsplit=1)
+                if len(parts) < 2 or not parts[1].strip():
+                    send_tg_message(chat_id, "Sahi format use karein: /unblock website_username")
+                    return jsonify({"status": "ok"})
+
+                query_username = parts[1].strip()
+                found_uid, found_entry = find_point_entry_by_website_username(query_username)
+                if not found_entry:
+                    send_tg_message(chat_id, f"❌ Website username '{query_username}' se koi Telegram account link nahi mila.")
+                    return jsonify({"status": "ok"})
+
+                found_entry["blocked_until"] = 0
+                save_all()
+                send_tg_message(chat_id, f"✅ {query_username} ka block hata diya — points ab count honge.")
                 return jsonify({"status": "ok"})
 
             if text.startswith("/promo "):
