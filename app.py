@@ -86,6 +86,7 @@ telegram_points_db = db.get("telegram_points", {})
 otp_db = {}
 broadcast_sessions = {}
 redeem_sessions = {}
+ad_sessions = {}  # admin state for /ads: waiting for the photo to post to the group
 top_command_cooldowns = {}  # user_id -> last-used timestamp, for the /top rate limit
 
 def save_all():
@@ -137,7 +138,7 @@ def get_point_entry(tg_user_id):
     return telegram_points_db[tg_user_id]
 
 def get_display_name(entry):
-    """Used only for /top and the cheating alert: @username if set, else
+    """Used for the cheating alert: @username if set, else
     'First Last' (or just 'First' if no last name), else 'unknown'."""
     if entry.get("tg_username"):
         return f"@{entry['tg_username']}"
@@ -146,15 +147,37 @@ def get_display_name(entry):
     full = f"{first} {last}".strip()
     return full if full else "unknown"
 
-def send_tg_message(chat_id, text, reply_to=None):
+def get_full_name(entry):
+    """Used only for /top — always prefers 'First Last' (or just 'First') so the
+    leaderboard reads like real people's names, falling back to @username, then 'unknown'."""
+    first = (entry.get("first_name") or "").strip()
+    last = (entry.get("last_name") or "").strip()
+    full = f"{first} {last}".strip()
+    if full:
+        return full
+    if entry.get("tg_username"):
+        return f"@{entry['tg_username']}"
+    return "unknown"
+
+def send_tg_message(chat_id, text, reply_to=None, parse_mode=None):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     payload = {"chat_id": chat_id, "text": text}
     if reply_to:
         payload["reply_to_message_id"] = reply_to
+    if parse_mode:
+        payload["parse_mode"] = parse_mode
     try:
         requests.post(url, json=payload, timeout=10)
     except Exception as e:
         print("Group message send error:", e)
+
+def send_tg_photo(chat_id, file_id, caption):
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendPhoto"
+    payload = {"chat_id": chat_id, "photo": file_id, "caption": caption, "parse_mode": "HTML"}
+    try:
+        requests.post(url, json=payload, timeout=15)
+    except Exception as e:
+        print("Photo send error:", e)
 
 def find_username_by_email(email):
     email = email.strip().lower()
@@ -436,12 +459,14 @@ def handle_group_points_message(user_id, chat_id, msg):
             if not ranked:
                 send_tg_message(chat_id, "Abhi tak koi points nahi hain.", msg_id)
             else:
-                medals = ["🥇", "🥈", "🥉", "4.", "5."]
-                lines = ["🏆 Top 5 Point Earners:"]
+                medals = ["🥇", "🥈", "🥉", "🏅", "🏅"]
+                lines = ["━━━━━━━━━━━━━━━", "🏆 <b>TOP 5 POINT EARNERS</b> 🏆", "━━━━━━━━━━━━━━━", ""]
                 for idx, (uid, e) in enumerate(ranked):
-                    name = get_display_name(e)
-                    lines.append(f"{medals[idx]} {name} — {e.get('points', 0)} points")
-                send_tg_message(chat_id, "\n".join(lines), msg_id)
+                    name = get_full_name(e)
+                    lines.append(f"{medals[idx]} {name} — <b>{e.get('points', 0)}</b> points")
+                lines.append("")
+                lines.append("━━━━━━━━━━━━━━━")
+                send_tg_message(chat_id, "\n".join(lines), msg_id, parse_mode="HTML")
 
     elif not handled and lower.startswith("/link"):
         handled = True
@@ -1143,6 +1168,35 @@ def telegram_webhook():
                 return jsonify({"status": "ok"})
 
         if user_id == ADMIN_CHAT_ID and str(chat_id) != str(POINTS_GC_CHAT_ID):
+            if user_id in ad_sessions and "photo" in msg:
+                photo_list = msg["photo"]
+                file_id = photo_list[-1]["file_id"]  # largest size
+                ad_caption = (
+                    "🎉 <b>PROFITIX — Ghar Baithe Kamao!</b> 🎉\n"
+                    "━━━━━━━━━━━━━━━\n\n"
+                    "💰 Bas group me chat karo aur paise kamao — itna hi simple hai!\n\n"
+                    "📝 <b>Kaise shuru karein:</b>\n\n"
+                    "1️⃣ Pehle FREE account banao:\n"
+                    "👉 https://profitix.onrender.com\n\n"
+                    "2️⃣ Account banane ke baad, apni registered Gmail is group me link karo:\n"
+                    "👉 /link yourgmail@gmail.com\n\n"
+                    "3️⃣ Ab bas normal chat karo group me — har message ka 1 point milega!\n\n"
+                    "4️⃣ Points enough ho jaayein to likho:\n"
+                    "👉 redeem\n\n"
+                    "5️⃣ Points seedha aapke website balance me add ho jaayenge — jab chaho withdraw kar lo!\n\n"
+                    "━━━━━━━━━━━━━━━\n"
+                    "🚀 Koi kaam ka jhanjhat nahi — bas chat karo aur kamao!"
+                )
+                send_tg_photo(POINTS_GC_CHAT_ID, file_id, ad_caption)
+                send_tg_message(chat_id, "✅ Ad photo ke saath group me bhej diya!")
+                del ad_sessions[user_id]
+                return jsonify({"status": "ok"})
+
+            if text.startswith("/ads"):
+                ad_sessions[user_id] = {"step": "WAITING_PHOTO"}
+                send_tg_message(chat_id, "📸 Ab wahi photo bhejiye jo ad ke saath group me post karni hai.")
+                return jsonify({"status": "ok"})
+
             if text.startswith("/refreshnames"):
                 updated, failed = refresh_all_names()
                 send_tg_message(chat_id, f"✅ Names refresh ho gaye — {updated} updated, {failed} fetch nahi ho paaye (shayad wo user group chhod chuka hai).")
