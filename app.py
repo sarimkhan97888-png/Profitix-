@@ -86,6 +86,7 @@ telegram_points_db = db.get("telegram_points", {})
 otp_db = {}
 broadcast_sessions = {}
 redeem_sessions = {}
+top_command_cooldowns = {}  # user_id -> last-used timestamp, for the /top rate limit
 
 def save_all():
     """Persist every in-memory collection together so nothing gets dropped on save."""
@@ -163,79 +164,77 @@ def find_point_entry_by_website_username(query):
 
 def analyze_cheating(entry):
     """Spam/farming heuristics based on the user's logged group messages (kept since their
-    last redeem). Tuned very strict — even one small suspicious pattern gets flagged."""
+    last redeem). Uses proportional/episode-based checks — occasional short messages or one
+    fast burst in a large sample is normal human behaviour and stays green; only a repeated
+    pattern (scaled to how many messages were sent) gets flagged."""
     log = entry.get("message_log", [])
     total = len(log)
     if total == 0:
         return False, ["Is user ka koi message log nahi mila."], total
 
     texts = [(m.get("text") or "").strip().lower() for m in log]
-
-    counts = {}
-    for t in texts:
-        counts[t] = counts.get(t, 0) + 1
-    most_common_text, most_common_count = max(counts.items(), key=lambda kv: kv[1])
-    duplicate_ratio = most_common_count / total
-
-    short_count = sum(1 for t in texts if len(t) <= 2)
-    short_ratio = short_count / total
-
-    unique_ratio = len(set(texts)) / total
-
-    avg_len = sum(len(t) for t in texts) / total
-
     times = []
     for m in log:
         try:
-            times.append(float(m.get("ts", 0)))
+            times.append(float(m.get("ts", 0) or 0))
         except (TypeError, ValueError):
-            pass
-    times.sort()
-    burst_count = sum(1 for i in range(1, len(times)) if (times[i] - times[i - 1]) < 3)
-    burst_ratio = (burst_count / total) if total else 0
-    fastest_gap = min((times[i] - times[i - 1] for i in range(1, len(times))), default=None)
+            times.append(0)
 
-    # Longest run of consecutive identical messages (in send order)
+    flags = []
+
+    # 1) Duplicate-burst episodes: 3+ identical messages sent within 10 seconds of each other.
+    # One such episode in a decent-sized sample is normal (people repeat "hi" etc. sometimes) —
+    # only flag if it happens more often than roughly once per 50 messages sent.
+    episodes = 0
+    i = 0
+    while i < total - 2:
+        if texts[i] and texts[i] == texts[i + 1] == texts[i + 2] and (times[i + 2] - times[i]) <= 10:
+            episodes += 1
+            i += 3  # move past this episode instead of re-counting overlapping windows
+        else:
+            i += 1
+    allowed_episodes = max(1, total // 50)
+    if episodes > allowed_episodes:
+        flags.append(f"⚠️ {episodes} baar 3+ same messages 10 second ke andar bheje gaye (normal range: ~{allowed_episodes} tak {total} messages me) — repeat-spam pattern")
+
+    # 2) Absolute safety net: 5+ identical messages in a row is never normal, regardless of sample size.
     max_streak = 1
     cur_streak = 1
-    for i in range(1, len(texts)):
+    for i in range(1, total):
         if texts[i] and texts[i] == texts[i - 1]:
             cur_streak += 1
             max_streak = max(max_streak, cur_streak)
         else:
             cur_streak = 1
+    if max_streak >= 5:
+        flags.append(f"⚠️ Lagatar {max_streak} baar bilkul wahi same message bheja gaya — bahut clear spam pattern")
 
-    # Near-duplicate check: same first 4 words repeated across messages
-    prefix_counts = {}
+    # 3) Short/junk messages: a chunk of short replies (ok, hi, etc.) is normal chatting —
+    # only flag once they make up more than ~35% of everything sent.
+    short_count = sum(1 for t in texts if len(t) <= 2)
+    short_ratio = short_count / total
+    if total >= 15 and short_ratio >= 0.35:
+        flags.append(f"⚠️ {round(short_ratio * 100)}% ({short_count}/{total}) messages bahut chhote/junk (1-2 characters) hain")
+
+    # 4) Variety check: relaxed — only flag when the majority of messages are repeats.
+    unique_ratio = len(set(texts)) / total
+    if total >= 20 and unique_ratio <= 0.45:
+        flags.append(f"⚠️ Sirf {round(unique_ratio * 100)}% messages unique hain — kaafi kam variety, farming jaisa lagta hai")
+
+    # 5) Overall duplicate share of a single exact message — allow a fair chunk of repeats,
+    # only flag when one message dominates the sample.
+    counts = {}
     for t in texts:
-        words = t.split()
-        if len(words) >= 2:
-            prefix = " ".join(words[:4])
-            prefix_counts[prefix] = prefix_counts.get(prefix, 0) + 1
-    max_prefix_repeat = max(prefix_counts.values(), default=0)
-
-    flags = []
-    if duplicate_ratio >= 0.1 and most_common_count >= 2:
+        counts[t] = counts.get(t, 0) + 1
+    most_common_text, most_common_count = max(counts.items(), key=lambda kv: kv[1])
+    duplicate_ratio = most_common_count / total
+    if total >= 15 and duplicate_ratio >= 0.3:
         preview = most_common_text[:25] if most_common_text else "(khaali)"
-        flags.append(f"⚠️ {round(duplicate_ratio * 100)}% ({most_common_count}) messages same/duplicate hain — '{preview}'")
-    if max_streak >= 2:
-        flags.append(f"⚠️ Lagatar {max_streak} baar wahi same message bheja — repeat-spam pattern")
-    if short_ratio >= 0.1:
-        flags.append(f"⚠️ {round(short_ratio * 100)}% messages bahut chhote/junk (1-2 characters) hain")
-    if burst_ratio >= 0.08:
-        flags.append(f"⚠️ {round(burst_ratio * 100)}% messages 3 second se kam gap me bheje gaye — spam pattern lagta hai")
-    if fastest_gap is not None and fastest_gap < 1.5:
-        flags.append(f"⚠️ Do messages sirf {round(fastest_gap, 1)} second ke gap me bheje gaye — bahut fast, insaan jaisa nahi lagta")
-    if total >= 5 and unique_ratio <= 0.6:
-        flags.append(f"⚠️ Sirf {round(unique_ratio * 100)}% messages unique hain — kam variety, farming jaisa lagta hai")
-    if avg_len <= 4:
-        flags.append(f"⚠️ Average message length sirf {round(avg_len, 1)} characters hai — bahut chhote/khokhle messages")
-    if max_prefix_repeat >= 2:
-        flags.append(f"⚠️ Kai messages ek jaise shabdon se shuru hote hain ({max_prefix_repeat} baar) — template/copy-paste jaisa lagta hai")
+        flags.append(f"⚠️ {round(duplicate_ratio * 100)}% ({most_common_count}/{total}) messages ek hi text hain — '{preview}'")
 
     suspicious = len(flags) > 0
     if not flags:
-        flags.append("✅ Koi spam/duplicate/burst pattern nahi mila — normal lag raha hai.")
+        flags.append(f"✅ {total} messages check kiye, koi unusual spam/duplicate pattern nahi mila — normal lag raha hai.")
 
     return suspicious, flags, total
 
@@ -371,6 +370,25 @@ def handle_group_points_message(user_id, chat_id, msg):
         pts = entry["points"]
         send_tg_message(chat_id, f"Point- {pts}", msg_id)
 
+    elif not handled and lower in ("/top", "/leaderboard", "top"):
+        handled = True
+        now = time.time()
+        if user_id != ADMIN_CHAT_ID and now - top_command_cooldowns.get(user_id, 0) < 3600:
+            pass  # rate-limited: 1 use per hour per user (owner is exempt) — stay silent
+        else:
+            top_command_cooldowns[user_id] = now
+            ranked = sorted(telegram_points_db.items(), key=lambda kv: kv[1].get("points", 0), reverse=True)
+            ranked = [(uid, e) for uid, e in ranked if e.get("points", 0) > 0][:5]
+            if not ranked:
+                send_tg_message(chat_id, "Abhi tak koi points nahi hain.", msg_id)
+            else:
+                medals = ["🥇", "🥈", "🥉", "4.", "5."]
+                lines = ["🏆 Top 5 Point Earners:"]
+                for idx, (uid, e) in enumerate(ranked):
+                    name = e.get("tg_username") or "unknown"
+                    lines.append(f"{medals[idx]} @{name} — {e.get('points', 0)} points")
+                send_tg_message(chat_id, "\n".join(lines), msg_id)
+
     elif not handled and lower.startswith("/link"):
         handled = True
         parts = stripped.split(maxsplit=1)
@@ -414,8 +432,11 @@ def handle_group_points_message(user_id, chat_id, msg):
             entry["points"] += 1
             log = entry.setdefault("message_log", [])
             log.append({"text": stripped[:200], "ts": msg.get("date", 0)})
-            # No cap here on purpose — every message stays logged until the user redeems,
-            # so /check always sees the complete history since their last redeem.
+            # Every message stays logged until the user redeems (so /check sees full history
+            # since their last redeem) — capped at 500 as a safety net so one very active user
+            # can't bloat the shared database document for everyone.
+            if len(log) > 500:
+                del log[0]
             save_all()
 
             spam_reason = check_realtime_spam(entry)
@@ -1068,6 +1089,24 @@ def telegram_webhook():
                 return jsonify({"status": "ok"})
 
         if user_id == ADMIN_CHAT_ID and str(chat_id) != str(POINTS_GC_CHAT_ID):
+            if text.startswith("/stats"):
+                total_users = len(telegram_points_db)
+                linked_users = sum(1 for e in telegram_points_db.values() if e.get("username"))
+                pending_points = sum(e.get("points", 0) for e in telegram_points_db.values())
+                pending_value = round(pending_points * POINT_VALUE, 2)
+                blocked_now = sum(1 for e in telegram_points_db.values() if time.time() < e.get("blocked_until", 0))
+
+                stats_lines = [
+                    "📊 Points System Stats",
+                    f"Total Telegram users tracked: {total_users}",
+                    f"Website se linked: {linked_users}",
+                    f"Pending points (sab users, abhi tak redeem nahi hue): {pending_points} (~₹{pending_value})",
+                    f"Currently blocked: {blocked_now}",
+                    f"Redeem threshold: {POINTS_REDEEM_THRESHOLD} points = ₹{round(POINTS_REDEEM_THRESHOLD * POINT_VALUE, 2)}",
+                ]
+                send_tg_message(chat_id, "\n".join(stats_lines))
+                return jsonify({"status": "ok"})
+
             if text.startswith("/check"):
                 parts = text.split(maxsplit=1)
                 if len(parts) < 2 or not parts[1].strip():
