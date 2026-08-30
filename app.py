@@ -136,6 +136,16 @@ def get_point_entry(tg_user_id):
         telegram_points_db[tg_user_id] = {"points": 0, "email": None, "username": None}
     return telegram_points_db[tg_user_id]
 
+def get_display_name(entry):
+    """Used only for /top and the cheating alert: @username if set, else
+    'First Last' (or just 'First' if no last name), else 'unknown'."""
+    if entry.get("tg_username"):
+        return f"@{entry['tg_username']}"
+    first = (entry.get("first_name") or "").strip()
+    last = (entry.get("last_name") or "").strip()
+    full = f"{first} {last}".strip()
+    return full if full else "unknown"
+
 def send_tg_message(chat_id, text, reply_to=None):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     payload = {"chat_id": chat_id, "text": text}
@@ -304,10 +314,10 @@ def maybe_alert_admin(user_id, entry, reason):
     if not ADMIN_CHAT_ID or not reason:
         return
     uname = entry.get("username") or "Not linked"
-    tgname = entry.get("tg_username") or "unknown"
+    display_name = get_display_name(entry)
     alert_text = (
         f"🚨 Cheating alert!\n"
-        f"Telegram: @{tgname}\n"
+        f"Telegram: {display_name}\n"
         f"Website username: {uname}\n"
         f"Points: {entry.get('points', 0)}\n"
         f"Reason: {reason}"
@@ -330,11 +340,16 @@ def handle_group_points_message(user_id, chat_id, msg):
     'point' / 'redeem' / 'link' commands, and the redeem-email reply flow."""
     text = msg.get("text", "")
     msg_id = msg.get("message_id")
-    tg_username = msg.get("from", {}).get("username", "")
+    from_obj = msg.get("from", {})
+    tg_username = from_obj.get("username", "")
 
     entry = get_point_entry(user_id)
     if tg_username:
         entry["tg_username"] = tg_username
+    if from_obj.get("first_name"):
+        entry["first_name"] = from_obj.get("first_name", "")
+    if from_obj.get("last_name"):
+        entry["last_name"] = from_obj.get("last_name", "")
 
     stripped = (text or "").strip()
     lower = stripped.lower()
@@ -385,8 +400,8 @@ def handle_group_points_message(user_id, chat_id, msg):
                 medals = ["🥇", "🥈", "🥉", "4.", "5."]
                 lines = ["🏆 Top 5 Point Earners:"]
                 for idx, (uid, e) in enumerate(ranked):
-                    name = e.get("tg_username") or "unknown"
-                    lines.append(f"{medals[idx]} @{name} — {e.get('points', 0)} points")
+                    name = get_display_name(e)
+                    lines.append(f"{medals[idx]} {name} — {e.get('points', 0)} points")
                 send_tg_message(chat_id, "\n".join(lines), msg_id)
 
     elif not handled and lower.startswith("/link"):
