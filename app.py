@@ -984,8 +984,8 @@ def withdraw():
     details = data.get('details')
     user = users_db[username]
 
-    if amount < 100:
-        return jsonify({"status": "error", "message": "Minimum withdrawal is ₹100"})
+    if amount < 10:
+        return jsonify({"status": "error", "message": "Minimum withdrawal is ₹10"})
 
     if user['balance'] < amount:
         return jsonify({"status": "error", "message": "Insufficient balance"})
