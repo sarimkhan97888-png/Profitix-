@@ -1176,18 +1176,13 @@ def telegram_webhook():
                 ad_caption = (
                     "🎉 <b>PROFITIX — Ghar Baithe Kamao!</b> 🎉\n"
                     "━━━━━━━━━━━━━━━\n\n"
-                    "💰 Bas group me chat karo aur paise kamao — itna hi simple hai!\n\n"
-                    "📝 <b>Kaise shuru karein:</b>\n\n"
-                    "1️⃣ Pehle FREE account banao:\n"
-                    "👉 https://profitix.onrender.com\n\n"
-                    "2️⃣ Account banane ke baad, apni registered Gmail is group me link karo:\n"
-                    "👉 /link yourgmail@gmail.com\n\n"
-                    "3️⃣ Ab bas normal chat karo group me — har message ka 1 point milega!\n\n"
-                    "4️⃣ Points enough ho jaayein to likho:\n"
-                    "👉 redeem\n\n"
-                    "5️⃣ Points seedha aapke website balance me add ho jaayenge — jab chaho withdraw kar lo!\n\n"
+                    "1️⃣ Account banao: https://profitix.onrender.com\n"
+                    "2️⃣ Group me link karo: /link yourgmail@gmail.com\n"
+                    "3️⃣ Chat karo — har message = 1 point\n"
+                    "4️⃣ Points hone par likho: redeem\n"
+                    "5️⃣ Balance website pe aa jayega — withdraw kar lo!\n\n"
                     "━━━━━━━━━━━━━━━\n"
-                    "🚀 Koi kaam ka jhanjhat nahi — bas chat karo aur kamao!"
+                    "🚀 Bas chat karo aur kamao!"
                 )
                 saved_ad_db["file_id"] = file_id
                 saved_ad_db["caption"] = ad_caption
