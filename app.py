@@ -172,6 +172,36 @@ def find_point_entry_by_website_username(query):
             return uid, entry
     return None, None
 
+def refresh_all_names():
+    """Fetches fresh username/first_name/last_name for every tracked user directly from
+    Telegram (via getChatMember) — fixes old entries that never got a name saved,
+    without needing that person to send a new message."""
+    if not POINTS_GC_CHAT_ID:
+        return 0, 0
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getChatMember"
+    updated = 0
+    failed = 0
+    for uid, entry in telegram_points_db.items():
+        try:
+            resp = requests.get(url, params={"chat_id": POINTS_GC_CHAT_ID, "user_id": uid}, timeout=10)
+            data = resp.json()
+            if data.get("ok"):
+                user = data["result"]["user"]
+                if user.get("username"):
+                    entry["tg_username"] = user["username"]
+                if user.get("first_name"):
+                    entry["first_name"] = user["first_name"]
+                if user.get("last_name"):
+                    entry["last_name"] = user["last_name"]
+                updated += 1
+            else:
+                failed += 1
+        except Exception as e:
+            print("refresh_all_names error for", uid, repr(e))
+            failed += 1
+    save_all()
+    return updated, failed
+
 def analyze_cheating(entry):
     """Spam/farming heuristics based on the user's logged group messages (kept since their
     last redeem). Uses proportional/episode-based checks — occasional short messages or one
@@ -1104,6 +1134,11 @@ def telegram_webhook():
                 return jsonify({"status": "ok"})
 
         if user_id == ADMIN_CHAT_ID and str(chat_id) != str(POINTS_GC_CHAT_ID):
+            if text.startswith("/refreshnames"):
+                updated, failed = refresh_all_names()
+                send_tg_message(chat_id, f"✅ Names refresh ho gaye — {updated} updated, {failed} fetch nahi ho paaye (shayad wo user group chhod chuka hai).")
+                return jsonify({"status": "ok"})
+
             if text.startswith("/stats"):
                 total_users = len(telegram_points_db)
                 linked_users = sum(1 for e in telegram_points_db.values() if e.get("username"))
