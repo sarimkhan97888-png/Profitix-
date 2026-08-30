@@ -88,7 +88,10 @@ otp_db = {}
 broadcast_sessions = {}
 redeem_sessions = {}
 ad_sessions = {}  # admin state for /ads: waiting for the photo to post to the group
+point_edit_sessions = {}  # admin state for /add and /cut: forward a message, then give an amount
 top_command_cooldowns = {}  # user_id -> last-used timestamp, for the /top rate limit
+undoable_cheats = {}  # tg_user_id -> {"token", "chat_id", "removed_points", "removed_log", "prev_blocked_until", "strike_ts"}
+                       # keyed by user so a NEW cheat case for the same user auto-expires the old Return button
 
 def save_all():
     """Persist every in-memory collection together so nothing gets dropped on save."""
@@ -435,9 +438,9 @@ def handle_group_points_message(user_id, chat_id, msg):
                     entry["email"] = email
                     entry["username"] = matched_username
                     save_all()
-                    send_tg_message(chat_id, f"✅ Redeem successful! {pts} points = ₹{credit} aapke PROFITIX account ({matched_username}) me add ho gaya hai. Website ke Withdraw tab se ab withdraw kar sakte ho!", msg_id)
+                    send_tg_message(chat_id, f"✅ Redeem successful! ₹{credit} balance added.", msg_id)
                 else:
-                    send_tg_message(chat_id, f"⚠️ Aapke paas sirf {pts} points hain. Redeem ke liye kam se kam {POINTS_REDEEM_THRESHOLD} points chahiye.", msg_id)
+                    send_tg_message(chat_id, f"⚠️ Minimum {POINTS_REDEEM_THRESHOLD} points chahiye redeem ke liye.", msg_id)
             else:
                 send_tg_message(chat_id, "❌ Account nahi mila. Pehle register karein: https://profitix.onrender.com\nPhir yahan bhejein: /link sarimkhan@gmail.com", msg_id)
         else:
@@ -490,14 +493,14 @@ def handle_group_points_message(user_id, chat_id, msg):
         handled = True
         pts = entry["points"]
         if pts < POINTS_REDEEM_THRESHOLD:
-            send_tg_message(chat_id, f"⚠️ Redeem ke liye kam se kam {POINTS_REDEEM_THRESHOLD} points chahiye. Aapke paas abhi {pts} points hain.", msg_id)
+            send_tg_message(chat_id, f"⚠️ Minimum {POINTS_REDEEM_THRESHOLD} points chahiye redeem ke liye.", msg_id)
         elif entry.get("username"):
             credit = round(pts * POINT_VALUE, 2)
             users_db[entry["username"]]["balance"] += credit
             entry["points"] = 0
             entry["message_log"] = []
             save_all()
-            send_tg_message(chat_id, f"✅ Redeem successful! {pts} points = ₹{credit} aapke account ({entry['username']}) me add ho gaya. Website se withdraw kar sakte ho!", msg_id)
+            send_tg_message(chat_id, f"✅ Redeem successful! ₹{credit} balance added.", msg_id)
         else:
             redeem_sessions[user_id] = {"step": "AWAITING_EMAIL"}
             send_tg_message(chat_id, "🎉 Redeem karne ke liye apni PROFITIX website wali registered Gmail reply karke bhejein.", msg_id)
@@ -522,14 +525,43 @@ def handle_group_points_message(user_id, chat_id, msg):
 
             spam_reason = check_realtime_spam(entry)
             if spam_reason:
+                removed_entries = list(log[-20:])
+                prev_blocked_until = entry.get("blocked_until", 0)
+
                 entry["points"] = max(0, entry["points"] - 20)
-                del log[-20:]  # remove the last 20 logged messages along with the 20 cut points
+                del log[-20:]
                 strike_count = record_cheat_strike(entry)
+                strike_ts = entry["cheat_strikes"][-1] if entry.get("cheat_strikes") else None
                 save_all()
+
                 send_tg_message(chat_id, "⚠️ Aapne cheating ki hai — spam/duplicate messages detect hue, isliye 20 points kaat diye gaye hain. Aage se normal messages bhejein.", msg_id)
                 if strike_count >= 5:
                     send_tg_message(chat_id, "🚫 5 baar cheating pakdi gayi — agle 24 hours ke liye aapke points count nahi honge.", msg_id)
-                maybe_alert_admin(user_id, entry, spam_reason)
+
+                if ADMIN_CHAT_ID:
+                    token = str(int(time.time() * 1000))
+                    undoable_cheats[user_id] = {
+                        "token": token,
+                        "chat_id": chat_id,
+                        "removed_points": 20,
+                        "removed_log": removed_entries,
+                        "prev_blocked_until": prev_blocked_until,
+                        "strike_ts": strike_ts
+                    }
+                    display_name = get_display_name(entry)
+                    admin_text = (
+                        f"🚨 Cheating — 20 points kaat diye gaye\n"
+                        f"Telegram: {display_name}\n"
+                        f"Website username: {entry.get('username') or 'Not linked'}\n"
+                        f"Points ab: {entry.get('points', 0)}\n"
+                        f"Reason: {spam_reason}"
+                    )
+                    keyboard = {"inline_keyboard": [[{"text": "↩️ Return (points wapas karo)", "callback_data": f"cheat_return_{user_id}_{token}"}]]}
+                    send_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+                    try:
+                        requests.post(send_url, json={"chat_id": ADMIN_CHAT_ID, "text": admin_text, "reply_markup": keyboard}, timeout=10)
+                    except Exception as e:
+                        print("cheat alert send error:", repr(e))
 
 # --- Email OTP via Brevo API (HTTPS-based — works on Render, unlike raw SMTP which Render blocks) ---
 BREVO_API_KEY = os.environ.get("BREVO_API_KEY", "")
@@ -1170,6 +1202,59 @@ def telegram_webhook():
                 return jsonify({"status": "ok"})
 
         if user_id == ADMIN_CHAT_ID and str(chat_id) != str(POINTS_GC_CHAT_ID):
+            if user_id in point_edit_sessions:
+                session_data = point_edit_sessions[user_id]
+
+                if session_data["step"] == "WAITING_FORWARD":
+                    forward_from = msg.get("forward_from") or (msg.get("forward_origin") or {}).get("sender_user")
+                    if not forward_from:
+                        send_tg_message(chat_id, "⚠️ Ye ek forwarded message nahi lagi. Group se us member ka koi message forward karke bhejein.")
+                        return jsonify({"status": "ok"})
+
+                    target_uid = str(forward_from.get("id"))
+                    target_name = forward_from.get("first_name", "") or forward_from.get("username", "") or target_uid
+                    session_data["step"] = "WAITING_AMOUNT"
+                    session_data["target_uid"] = target_uid
+                    session_data["target_name"] = target_name
+                    verb = "add" if session_data["mode"] == "add" else "cut"
+                    send_tg_message(chat_id, f"👤 {target_name} select ho gaya. Kitne points {verb} karne hain? (sirf number bhejein)")
+                    return jsonify({"status": "ok"})
+
+                if session_data["step"] == "WAITING_AMOUNT":
+                    try:
+                        amount = int(text.strip())
+                        if amount <= 0:
+                            raise ValueError
+                    except ValueError:
+                        send_tg_message(chat_id, "⚠️ Sahi positive number bhejein (jaise 50).")
+                        return jsonify({"status": "ok"})
+
+                    target_uid = session_data["target_uid"]
+                    target_name = session_data["target_name"]
+                    target_entry = get_point_entry(target_uid)
+
+                    if session_data["mode"] == "add":
+                        target_entry["points"] += amount
+                        save_all()
+                        send_tg_message(chat_id, f"✅ {amount} points {target_name} ko add kar diye. Ab total: {target_entry['points']} points.")
+                    else:
+                        target_entry["points"] = max(0, target_entry["points"] - amount)
+                        save_all()
+                        send_tg_message(chat_id, f"✅ {amount} points {target_name} se kaat diye. Ab total: {target_entry['points']} points.")
+
+                    del point_edit_sessions[user_id]
+                    return jsonify({"status": "ok"})
+
+            if text.strip().lower() == "/add":
+                point_edit_sessions[user_id] = {"step": "WAITING_FORWARD", "mode": "add"}
+                send_tg_message(chat_id, "📩 Ab us member ka message group se forward karke bhejein jiske points add karne hain.")
+                return jsonify({"status": "ok"})
+
+            if text.strip().lower() == "/cut":
+                point_edit_sessions[user_id] = {"step": "WAITING_FORWARD", "mode": "cut"}
+                send_tg_message(chat_id, "📩 Ab us member ka message group se forward karke bhejein jiske points cut karne hain.")
+                return jsonify({"status": "ok"})
+
             if user_id in ad_sessions and "photo" in msg:
                 photo_list = msg["photo"]
                 file_id = photo_list[-1]["file_id"]  # largest size
@@ -1464,6 +1549,47 @@ def telegram_webhook():
                         "message_id": msg_id,
                         "text": "🎉 Broadcast notification successfully website par bhej di gayi hai!"
                     })
+            return jsonify({"status": "ok"})
+
+        if user_id == ADMIN_CHAT_ID and data_str.startswith("cheat_return_"):
+            answer_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/answerCallbackQuery"
+            requests.post(answer_url, json={"callback_query_id": callback["id"]})
+
+            edit_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/editMessageText"
+            original_text = callback["message"].get("text", "Cheating report")
+
+            _, _, target_uid, token = data_str.split("_", 3)
+            case = undoable_cheats.get(target_uid)
+
+            if not case or case.get("token") != token:
+                # Either already returned, or a newer cheat case for this same user came in
+                # after this button was sent — that newer one is the one that still counts.
+                requests.post(edit_url, json={
+                    "chat_id": chat_id,
+                    "message_id": msg_id,
+                    "text": original_text + "\n\n⚠️ Ye button ab expire ho chuka hai (already return ho chuka hai, ya isi user ka naya case aa gaya)."
+                })
+                return jsonify({"status": "ok"})
+
+            del undoable_cheats[target_uid]
+            entry = get_point_entry(target_uid)
+            entry["points"] += case["removed_points"]
+            log = entry.setdefault("message_log", [])
+            log.extend(case["removed_log"])
+            if case.get("strike_ts") is not None and entry.get("cheat_strikes"):
+                try:
+                    entry["cheat_strikes"].remove(case["strike_ts"])
+                except ValueError:
+                    pass
+            entry["blocked_until"] = case["prev_blocked_until"]
+            save_all()
+
+            send_tg_message(case["chat_id"], "↩️ Admin ne cheating action cancel kar diya — 20 points wapas add ho gaye.")
+            requests.post(edit_url, json={
+                "chat_id": chat_id,
+                "message_id": msg_id,
+                "text": original_text + "\n\n↩️ Return ho gaya — 20 points wapas kar diye gaye."
+            })
             return jsonify({"status": "ok"})
 
         if user_id != ADMIN_CHAT_ID:
