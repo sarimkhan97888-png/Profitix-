@@ -129,7 +129,7 @@ ADMIN_PAYMENT_CHANNEL = os.environ.get("ADMIN_PAYMENT_CHANNEL", "@PROFITIX77")
 # (this is usually a negative number for groups, e.g. -1001234567890).
 POINTS_GC_CHAT_ID = os.environ.get("POINTS_GC_CHAT_ID", "")
 POINT_VALUE = float(os.environ.get("POINT_VALUE", "0.001"))         # ₹ credited per point on redeem (10000 pts = ₹10)
-POINTS_REDEEM_THRESHOLD = int(os.environ.get("POINTS_REDEEM_THRESHOLD", "50"))
+POINTS_REDEEM_THRESHOLD = int(os.environ.get("POINTS_REDEEM_THRESHOLD", "100"))
 
 def get_point_entry(tg_user_id):
     if tg_user_id not in telegram_points_db:
@@ -206,11 +206,12 @@ def analyze_cheating(entry):
     """Spam/farming heuristics based on the user's logged group messages (kept since their
     last redeem). Uses proportional/episode-based checks — occasional short messages or one
     fast burst in a large sample is normal human behaviour and stays green; only a repeated
-    pattern (scaled to how many messages were sent) gets flagged."""
+    pattern (scaled to how many messages were sent) gets flagged. Returns a 0-100 cheating
+    score along with plain-language notes on exactly what was found."""
     log = entry.get("message_log", [])
     total = len(log)
     if total == 0:
-        return False, ["Is user ka koi message log nahi mila."], total
+        return False, ["Is user ka koi message log nahi mila."], total, 0
 
     texts = [(m.get("text") or "").strip().lower() for m in log]
     times = []
@@ -221,6 +222,7 @@ def analyze_cheating(entry):
             times.append(0)
 
     flags = []
+    score = 0
 
     # 1) Duplicate-burst episodes: 3+ identical messages sent within 10 seconds of each other.
     # One such episode in a decent-sized sample is normal (people repeat "hi" etc. sometimes) —
@@ -235,7 +237,9 @@ def analyze_cheating(entry):
             i += 1
     allowed_episodes = max(1, total // 50)
     if episodes > allowed_episodes:
-        flags.append(f"⚠️ {episodes} baar 3+ same messages 10 second ke andar bheje gaye (normal range: ~{allowed_episodes} tak {total} messages me) — repeat-spam pattern")
+        extra = episodes - allowed_episodes
+        flags.append(f"⚠️ Is user ne {episodes} baar 3+ same messages 10 second ke andar bheje (normal range: ~{allowed_episodes} tak {total} messages me) — repeat-spam pattern")
+        score += min(35, 15 + extra * 8)
 
     # 2) Absolute safety net: 5+ identical messages in a row is never normal, regardless of sample size.
     max_streak = 1
@@ -247,19 +251,22 @@ def analyze_cheating(entry):
         else:
             cur_streak = 1
     if max_streak >= 5:
-        flags.append(f"⚠️ Lagatar {max_streak} baar bilkul wahi same message bheja gaya — bahut clear spam pattern")
+        flags.append(f"⚠️ Is user ne lagatar {max_streak} baar bilkul wahi same message bheja — bahut clear spam pattern")
+        score += 35
 
     # 3) Short/junk messages: a chunk of short replies (ok, hi, etc.) is normal chatting —
     # only flag once they make up more than ~35% of everything sent.
     short_count = sum(1 for t in texts if len(t) <= 2)
     short_ratio = short_count / total
     if total >= 15 and short_ratio >= 0.35:
-        flags.append(f"⚠️ {round(short_ratio * 100)}% ({short_count}/{total}) messages bahut chhote/junk (1-2 characters) hain")
+        flags.append(f"⚠️ Is user ke {round(short_ratio * 100)}% ({short_count}/{total}) messages bahut chhote/junk (1-2 characters) the")
+        score += 15
 
     # 4) Variety check: relaxed — only flag when the majority of messages are repeats.
     unique_ratio = len(set(texts)) / total
     if total >= 20 and unique_ratio <= 0.45:
-        flags.append(f"⚠️ Sirf {round(unique_ratio * 100)}% messages unique hain — kaafi kam variety, farming jaisa lagta hai")
+        flags.append(f"⚠️ Is user ke sirf {round(unique_ratio * 100)}% messages unique the — kaafi kam variety, farming jaisa pattern")
+        score += 20
 
     # 5) Overall duplicate share of a single exact message — allow a fair chunk of repeats,
     # only flag when one message dominates the sample.
@@ -270,13 +277,15 @@ def analyze_cheating(entry):
     duplicate_ratio = most_common_count / total
     if total >= 15 and duplicate_ratio >= 0.3:
         preview = most_common_text[:25] if most_common_text else "(khaali)"
-        flags.append(f"⚠️ {round(duplicate_ratio * 100)}% ({most_common_count}/{total}) messages ek hi text hain — '{preview}'")
+        flags.append(f"⚠️ Is user ne {round(duplicate_ratio * 100)}% ({most_common_count}/{total}) messages me ek hi text bheja — '{preview}'")
+        score += 20
 
+    score = min(100, score)
     suspicious = len(flags) > 0
     if not flags:
         flags.append(f"✅ {total} messages check kiye, koi unusual spam/duplicate pattern nahi mila — normal lag raha hai.")
 
-    return suspicious, flags, total
+    return suspicious, flags, total, score
 
 def handle_admin_reply_command(chat_id, text, reply_from):
     """Lets the admin reply to a user's message in the points group with /block or /unblock
@@ -916,8 +925,8 @@ def withdraw():
     details = data.get('details')
     user = users_db[username]
 
-    if amount < 10:
-        return jsonify({"status": "error", "message": "Minimum withdrawal is ₹10"})
+    if amount < 100:
+        return jsonify({"status": "error", "message": "Minimum withdrawal is ₹100"})
 
     if user['balance'] < amount:
         return jsonify({"status": "error", "message": "Insufficient balance"})
@@ -1170,8 +1179,15 @@ def telegram_webhook():
                     send_tg_message(chat_id, f"❌ Website username '{query_username}' se koi Telegram account link nahi mila. User ne group me pehle 'redeem' ya '/link {query_username} wali Gmail' se apna account link kiya hoga tabhi ye milega.")
                     return jsonify({"status": "ok"})
 
-                suspicious, flags, total_logged = analyze_cheating(found_entry)
-                verdict = "🚩 SUSPICIOUS — cheating ho sakti hai" if suspicious else "✅ CLEAN — normal user lagta hai"
+                suspicious, flags, total_logged, score = analyze_cheating(found_entry)
+                if score >= 60:
+                    verdict = f"🚩 CHEATING — {score}% confidence (bahut zyada likely)"
+                elif score >= 30:
+                    verdict = f"⚠️ SUSPICIOUS — {score}% confidence (halka shak hai, nazar rakhein)"
+                elif score > 0:
+                    verdict = f"🟡 MINOR — {score}% confidence (chhoti si baat, zyada chinta ki nahi)"
+                else:
+                    verdict = "✅ CLEAN — 0% cheating signal, normal user lagta hai"
 
                 blocked_note = ""
                 if time.time() < found_entry.get("blocked_until", 0):
