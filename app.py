@@ -517,9 +517,9 @@ def handle_group_points_message(user_id, chat_id, msg):
             log = entry.setdefault("message_log", [])
             log.append({"text": stripped[:200], "ts": msg.get("date", 0)})
             # Every message stays logged until the user redeems (so /check sees full history
-            # since their last redeem) — capped at 500 as a safety net so one very active user
-            # can't bloat the shared database document for everyone.
-            if len(log) > 500:
+            # since their last redeem) — capped at 150 to keep memory usage safe on Render's
+            # free tier (500 was too high and caused an out-of-memory crash with many active users).
+            if len(log) > 150:
                 del log[0]
             save_all()
 
